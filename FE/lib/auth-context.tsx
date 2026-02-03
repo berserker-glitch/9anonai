@@ -6,6 +6,10 @@ interface User {
     id: string;
     email: string;
     name?: string;
+    role?: string;
+    personalization?: string;
+    isOnboarded?: boolean;
+    marketingSource?: string;
 }
 
 interface AuthContextType {
@@ -14,6 +18,8 @@ interface AuthContextType {
     login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
     register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
     logout: () => void;
+    updateProfile: (data: { name?: string; personalization?: string; isOnboarded?: boolean; marketingSource?: string }) => Promise<{ success: boolean; error?: string }>;
+    changePassword: (current: string, newPass: string) => Promise<{ success: boolean; error?: string }>;
     isLoading: boolean;
 }
 
@@ -107,8 +113,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
     };
 
+    const updateProfile = async (updates: { name?: string; personalization?: string; isOnboarded?: boolean; marketingSource?: string }) => {
+        const url = `${API_URL}/auth/update-profile`;
+        console.log("[updateProfile] Calling:", url);
+        console.log("[updateProfile] Token exists:", !!token);
+        console.log("[updateProfile] Updates:", updates);
+
+        try {
+            const res = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify(updates),
+            });
+
+            console.log("[updateProfile] Response status:", res.status, res.statusText);
+
+            // Get raw text first to debug
+            const rawText = await res.text();
+            console.log("[updateProfile] Raw response:", rawText.substring(0, 500));
+
+            // Try to parse as JSON
+            let data;
+            try {
+                data = JSON.parse(rawText);
+            } catch (parseError) {
+                console.error("[updateProfile] JSON parse failed, raw response:", rawText);
+                return { success: false, error: `Server error (${res.status}): Response is not JSON` };
+            }
+
+            console.log("[updateProfile] Response data:", data);
+
+            if (!res.ok) {
+                console.error("[updateProfile] Failed:", res.status, data);
+                return { success: false, error: data.error || `HTTP ${res.status}: ${res.statusText}` };
+            }
+            setUser(data.user);
+            return { success: true };
+        } catch (e) {
+            console.error("[updateProfile] Exception:", e);
+            return { success: false, error: "Failed to update profile: " + (e instanceof Error ? e.message : String(e)) };
+        }
+    };
+
+    const changePassword = async (current: string, newPass: string) => {
+        try {
+            const res = await fetch(`${API_URL}/auth/change-password`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({ currentPassword: current, newPassword: newPass }),
+            });
+            const data = await res.json();
+            if (!res.ok) return { success: false, error: data.error };
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: "Failed to change password" };
+        }
+    };
+
     return (
-        <AuthContext.Provider value={{ user, token, login, register, logout, isLoading }}>
+        <AuthContext.Provider value={{ user, token, login, register, logout, updateProfile, changePassword, isLoading }}>
             {children}
         </AuthContext.Provider>
     );

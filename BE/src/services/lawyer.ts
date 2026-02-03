@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { config } from "../config";
 import { classifyIntent, isObviouslyCasual, Intent } from "./intent-classifier";
 import { routeQuery, buildContext } from "./query-router";
+import { generateContract, ContractData } from "./contract-generator";
+import { prisma } from "./prisma";
 
 const client = new OpenAI({
     baseURL: config.openRouterBaseUrl,
@@ -12,49 +14,88 @@ const client = new OpenAI({
     },
 });
 
+// Tool definition removed
+
+
+// DOC_GEN_SYSTEM_PROMPT removed
+
+
+
+
 const SYSTEM_PROMPT = `
-You are 9anon (قانون), a friendly and knowledgeable Moroccan law expert.
+You are 9anon, a Moroccan law expert AI assistant.
 
-## PERSONALITY
-Be natural, conversational, and helpful - like chatting with a smart friend who happens to know a lot about law. Don't be formal or robotic. Use a warm, approachable tone. It's okay to use contractions, casual phrasing, and show personality.
+CRITICAL FORMATTING RULES:
+1. NEVER use emojis in your responses
+2. RESPOND IN THE EXACT SAME LANGUAGE AS THE USER
+3. Be professional and concise
+4. ALWAYS end your response with a relevant follow-up question to keep the conversation going
 
-## LANGUAGE RULE
-Respond in the EXACT same language AND script as the user. If they write in Arabic script (العربية), respond in Arabic script. If they write in French, respond in French. If they write in English, respond in English. If they write Moroccan Darija in Latin letters (like "wach"), respond in the same way. NEVER convert between scripts - match exactly what the user uses.
+LANGUAGE MATCHING:
+- English message = English response
+- French message = French response
+- Arabic message = Arabic response
 
-## WHAT YOU HELP WITH
-- Moroccan law, procedures, rights, contracts
-- Criminal law - sentences, defenses, consequences
-- Family, labor, property, commercial law
-- Legal strategies and options
-- "What happens if I do X?" questions
+DOCUMENT GENERATION REQUESTS:
+When user asks to create, draft, or generate a contract:
 
-## WHAT YOU DON'T DO
-- International law or UN stuff (politely redirect to Moroccan law)
-- Non-legal topics (kindly say you're a law expert)
-- Help commit crimes (but you CAN explain consequences)
+STEP 1 - COLLECT INFORMATION:
+First, politely ask for the necessary details:
+- For rental contracts: landlord name/ID/address, tenant name/ID/address, property address, rent amount, deposit, start date
+- For employment contracts: employer details, employee details, position, salary, start date
+- For other contracts: relevant party details and terms
 
-## HOW TO RESPOND
-- Be direct and helpful, not preachy
-- For legal questions: cite relevant laws when you know them
-- For casual chat: just chat normally
-- Adjust length to the question - short for simple, detailed for complex
-- If unsure, suggest consulting a lawyer but still help
+STEP 2 - CONFIRM AND GENERATE:
+Once the user provides the information, briefly confirm-you have what you need. The PDF will be generated automatically by the system.
 
-## EXAMPLES OF GOOD RESPONSES
-User: "What's the penalty for theft?"
-You: "In Morocco, theft is covered under Articles 505-534 of the Penal Code. Simple theft can get you 1-5 years. If there was breaking and entering or violence, it goes up to 10-20 years. Want me to explain the specific circumstances?"
+IMPORTANT:
+- NEVER write out the full contract text yourself
+- NEVER mention "tools" or "functions" 
+- NEVER say you will "use a tool" or "call a function"
+- Just ask for info, then confirm and the system handles the rest
 
-User: "Hey"
-You: "Hey! What's on your mind?"
+LEGAL GUIDANCE:
+- Cite specific Moroccan law articles when relevant
+- Reference Law 67.12 for rentals, Labor Code for employment
+- Always recommend consulting a legal professional
+
+CRIMINAL LAW ANALYSIS PRINCIPLES:
+1. STRICT INTERPRETATION (التفسير الضيق):
+   - Apply the principle of narrow interpretation in criminal law
+   - Do NOT use argument by implication (مفهوم المخالفة) to create criminal liability
+   - Cite ONLY explicit statutory texts as basis for criminalization
+   - If a statute does not expressly criminalize conduct, say so clearly
+
+2. UNCERTAINTY AND DISPUTED MATTERS:
+   - When law is ambiguous or disputed, state: "This issue is doctrinally and judicially disputed (محل خلاف فقهي وقضائي)"
+   - Include a brief "legal uncertainty notice" when applicable
+   - Do NOT assign specific penalties unless there is a clear statutory basis
+   - Acknowledge when courts and prosecution have discretion in re-qualification
+
+3. PROPER LEGAL QUALIFICATION:
+   - Preserve distinctions between: threat, attempt, and beginning of execution
+   - Mention possible alternative qualifications (e.g., psychological violence under Law 103.13, harassment)
+   - Clearly state when conduct may lack clear criminal characterization under current law
+   - Attribute final qualification authority to courts and prosecution (النيابة العامة والقضاء)
+
+4. PROFESSIONAL LANGUAGE:
+   - Use cautious, measured legal language
+   - Avoid definitive statements about criminal liability when law is unclear
+   - Present multiple interpretations when they exist
+   - Always recommend verification with a practicing lawyer or judicial authority
 `;
+
 
 const CASUAL_PROMPT = `
-You are 9anon (قانون), a friendly Moroccan law AI assistant.
+You are 9anon, a friendly Moroccan law AI assistant.
 
-Be natural and conversational - respond like you're chatting with a friend. Match their language and energy. For casual greetings, just be friendly. For legal questions, show your expertise.
-
-Don't be formal or robotic. Keep it real and helpful.
+RULES:
+1. NEVER use emojis
+2. Respond in the same language as the user
+3. Be helpful and natural
+4. ALWAYS end your response with a relevant follow-up question to keep the conversation going
 `;
+
 
 
 export type StreamEvent =
@@ -62,36 +103,236 @@ export type StreamEvent =
     | { type: "intent"; intent: Intent }
     | { type: "citation"; sources: any[] }
     | { type: "token"; content: string }
+    | { type: "contract_generated"; document: any }
     | { type: "done" };
 
 /**
- * Web search fallback using Tavily API (or similar)
+ * Perplexity web search for real-time legal information
  */
-async function webSearch(query: string): Promise<string> {
+async function perplexitySearch(query: string): Promise<string> {
     try {
-        // Using OpenRouter's built-in web search via Perplexity or similar
         const response = await client.chat.completions.create({
             model: "perplexity/sonar",
             messages: [
                 {
                     role: "system",
-                    content: "Search for Moroccan law information. Return factual, cited results only."
+                    content: "Search for Moroccan law information. Return factual, well-cited results."
                 },
                 { role: "user", content: `Moroccan law: ${query}` }
             ],
-            max_tokens: 500,
+            max_tokens: 800,
         });
         return response.choices[0]?.message?.content || "";
     } catch (error) {
-        console.error("Web search failed:", error);
+        console.error("Perplexity search failed:", error);
         return "";
     }
 }
 
+/**
+ * Detect language from text
+ */
+function detectLanguage(text: string): "en" | "fr" | "ar" {
+    // Arabic characters
+    if (/[\u0600-\u06FF]/.test(text)) return "ar";
+    // French indicators
+    if (/\b(je|tu|il|nous|vous|ils|est|sont|avoir|être|pour|dans|avec|contrat|bail|travail)\b/i.test(text)) return "fr";
+    // Default to English
+    return "en";
+}
+
+/**
+ * Check if query is asking for document generation (FULLY FLEXIBLE)
+ */
+function isDocumentRequest(query: string): boolean {
+    return false; // DISABLED: Contract generation tool is temporarily disabled
+}
+
+
+
+
+/**
+ * Check if conversation has enough info to generate contract
+ */
+function hasEnoughContractInfo(query: string, history: any[]): boolean {
+    // Combine all conversation text
+    const fullConvo = history.map(m => m.content || "").join(" ") + " " + query;
+    const lowerQuery = query.toLowerCase();
+
+    // If user is asking to regenerate/resend PDF or change language, and there's history, allow it
+    const regenerateKeywords = [
+        'regenerate', 'same pdf', 'same contract', 'again', 'resend', 'redo',
+        'in french', 'in english', 'in arabic', 'en français', 'بالعربية',
+        'generate it', 'create it', 'want it', 'be in arabic', 'be in french', 'be in english',
+        'arabic version', 'french version', 'english version',
+        'بالعربي', 'version arabe', 'version française'
+    ];
+    const isRegenerateRequest = regenerateKeywords.some(k => lowerQuery.includes(k));
+    if (isRegenerateRequest && history.length > 2) {
+        // User wants to regenerate in a different language or same PDF - allow it
+        return true;
+    }
+
+    // Check for party names in the full conversation
+    // Arabic names pattern - looking for Arabic text with spaces
+    const arabicNamePattern = /[\u0600-\u06FF]{3,}\s+(?:بن\s+)?[\u0600-\u06FF]{3,}/g;
+    const arabicMatches = fullConvo.match(arabicNamePattern) || [];
+
+    // Western/transliterated names
+    const westernNamePattern = /\b[A-Z][a-z]+\s+(?:Ben\s+|Ibn\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g;
+    const westernMatches = fullConvo.match(westernNamePattern) || [];
+
+    const nameCount = arabicMatches.length + westernMatches.length;
+
+    // Check for monetary amounts (dirhams) or property details
+    const hasAmounts = /\d{1,3}(?:[,.\s]?\d{3})*\s*(?:MAD|DH|درهم|dirhams?)/i.test(fullConvo);
+    const hasProperty = /(?:رقم|عقار|شقة|منزل|أرض|property|apartment|house)/i.test(fullConvo);
+    const hasCIN = /(?:[A-Z]{1,2}\d{5,}|بطاقة|CIN|carte)/i.test(fullConvo);
+
+    // More flexible: need at least 2 names OR (1 name + amounts/property/CIN)
+    return nameCount >= 2 || (nameCount >= 1 && (hasAmounts || hasProperty || hasCIN));
+}
+
+/**
+ * Analyze query complexity to adjust response depth
+ */
+function analyzeComplexity(text: string): 'basic' | 'deep' {
+    const words = text.trim().split(/\s+/).length;
+
+    // Length heuristic: Long queries are usually complex scenarios
+    if (words > 15) return 'deep';
+
+    // Keyword heuristic: detailed scenarios
+    const deepKeywords = [
+        // English
+        "story", "situation", "happened", "problem", "issue", "case",
+        "accident", "died", "death", "killed", "murder",
+        "divorce", "married", "husband", "wife", "children", "custody",
+        "inheritance", "legacy", "heir",
+        "fired", "dismissed", "boss", "company", "work", "job",
+        "police", "arrested", "prison", "jail", "court",
+        "scam", "fraud", "money", "debt", "loan",
+        // French
+        "histoire", "situation", "problème", "cas",
+        "accident", "mort", "décès", "tué", "meurtre",
+        "divorce", "marié", "mari", "femme", "enfants", "garde",
+        "héritage", "succession", "héritier",
+        "licencié", "renvoyé", "patron", "entreprise", "travail", "boulot",
+        "police", "arrêté", "prison", "tribunal",
+        "arnaque", "fraude", "argent", "dette", "crédit",
+        // Arabic (Common keywords for stories/problems)
+        "مشكلة", "قصة", "حصل", "وقع", "حادثة",
+        "موت", "وفاة", "توفي", "قتل",
+        "طلاق", "زواج", "زوج", "زوجة", "أطفال", "حضانة",
+        "إرث", "ميراث", "ورثة",
+        "طرد", "فصل", "شغل", "عمل", "مدير",
+        "شرطة", "اعتقال", "سجن", "محكمة",
+        "نصب", "احتيال", "فلوس", "دين"
+    ];
+
+    const lowerText = text.toLowerCase();
+    if (deepKeywords.some(kw => lowerText.includes(kw))) return 'deep';
+
+    return 'basic';
+}
+
 export type ImageInput = { data: string; mimeType: string };
 
-export async function* getLegalAdviceStream(userQuery: string, history: any[] = [], images: ImageInput[] = []): AsyncGenerator<StreamEvent, void, unknown> {
+export async function* getLegalAdviceStream(
+    userQuery: string,
+    history: any[] = [],
+    images: ImageInput[] = [],
+    userId?: string
+): AsyncGenerator<StreamEvent, void, unknown> {
     try {
+        // Detect user's language
+        const userLang = detectLanguage(userQuery);
+
+        // Fetch User Personalization
+        let personalizationContext = "";
+        if (userId) {
+            try {
+                const user = await prisma.user.findUnique({
+                    where: { id: userId },
+                    select: { personalization: true }
+                });
+                if (user?.personalization) {
+                    let customContext = "";
+                    try {
+                        // Try to parse as JSON (new format)
+                        const parsed = JSON.parse(user.personalization);
+                        if (typeof parsed === 'object' && parsed !== null) {
+                            if (parsed.tones && Array.isArray(parsed.tones) && parsed.tones.length > 0) {
+                                customContext += `PREFERRED TONE/STYLE: ${parsed.tones.join(", ")}.\n`;
+                            }
+                            if (parsed.customInstructions) {
+                                customContext += `CUSTOM INSTRUCTIONS: ${parsed.customInstructions}\n`;
+                            }
+                            if (parsed.spokenLanguage) {
+                                if (parsed.spokenLanguage === "auto") {
+                                    // Detect language from user's query and make it explicit
+                                    const detectedLang = detectLanguage(userQuery);
+                                    const langNames: Record<string, string> = { "en": "English", "fr": "French", "ar": "Arabic" };
+                                    const detectedLangName = langNames[detectedLang] || "English";
+                                    customContext += `USER LANGUAGE SETTING: Auto-detect is ON. The user's latest message is in ${detectedLangName}. You MUST respond in ${detectedLangName}.\n`;
+                                } else {
+                                    // Map codes to full names
+                                    const langMap: Record<string, string> = { "en": "English", "fr": "French", "ar": "Arabic" };
+                                    const langName = langMap[parsed.spokenLanguage] || parsed.spokenLanguage;
+                                    customContext += `User Profile Preference: ${langName}.\n`;
+                                    customContext += `CRITICAL INSTRUCTION: You must ALWAYS match the language of the user's latest message. If the user writes in English, reply in English. If French, reply in French. If Arabic, reply in Arabic. The "Profile Preference" is ONLY a fallback for ambiguous inputs. DO NOT reply in ${langName} if the user is speaking a different language.\n`;
+                                }
+                            }
+                        } else {
+                            // Valid JSON but not object (e.g. quoted string)
+                            customContext = String(parsed);
+                        }
+                    } catch (e) {
+                        // detailed error or plain text fallback
+                        customContext = user.personalization;
+                    }
+
+                    if (customContext.trim()) {
+                        personalizationContext = `\n\n=== USER PERSONALIZATION ===\n${customContext}\n============================\n`;
+                    }
+                }
+            } catch (e) {
+                console.warn("Failed to fetch personalization", e);
+            }
+        }
+
+        // Complexity Analysis & Instruction Injection
+        const complexity = analyzeComplexity(userQuery);
+        let complexityInstruction = "";
+
+        if (complexity === "deep") {
+            complexityInstruction = `
+            
+=== DYNAMIC RESPONSE MODE: DEEP DIVE ===
+The user's query is identified as COMPLEX.
+INSTRUCTIONS:
+1. Provide a DETAILED and COMPREHENSIVE analysis.
+2. Break down the answer into clear sections (Legal Framework, Application to Case, Recommendations).
+3. Address nuances and potential "what if" scenarios.
+4. Do NOT be brief. Be thorough and explanatory.
+========================================
+`;
+        } else {
+            complexityInstruction = `
+
+=== DYNAMIC RESPONSE MODE: CONCISE ===
+The user's query is identified as BASIC/INFORMATIONAL.
+INSTRUCTIONS:
+1. Provide a DIRECT and CONCISE answer.
+2. Cite the relevant article/law immediately.
+3. Keep it short and to the point. Avoid unnecessary preamble.
+======================================
+`;
+        }
+
+        // Append to personalization context (will be added to system prompt)
+        personalizationContext += complexityInstruction;
+
         // 1. Quick casual check
         let intent: Intent;
 
@@ -107,8 +348,6 @@ export async function* getLegalAdviceStream(userQuery: string, history: any[] = 
         // Build user content with images if present
         const buildUserContent = (text: string) => {
             if (images.length === 0) return text;
-
-            // Multimodal content for vision
             const parts: any[] = images.map(img => ({
                 type: "image_url",
                 image_url: { url: `data:${img.mimeType};base64,${img.data}` }
@@ -124,7 +363,7 @@ export async function* getLegalAdviceStream(userQuery: string, history: any[] = 
             const stream = await client.chat.completions.create({
                 model: "google/gemini-3-flash-preview",
                 messages: [
-                    { role: "system", content: CASUAL_PROMPT },
+                    { role: "system", content: CASUAL_PROMPT + personalizationContext },
                     ...history.slice(-10),
                     { role: "user", content: buildUserContent(userQuery) }
                 ],
@@ -136,52 +375,59 @@ export async function* getLegalAdviceStream(userQuery: string, history: any[] = 
                 if (content) yield { type: "token", content };
             }
         } else {
-            // Legal question - Smart RAG
+            // Document generation check is done later with history context
+            const isDocRequestNow_check = isDocumentRequest(userQuery);
+            console.log("Initial doc request check:", isDocRequestNow_check, "User ID:", userId);
+
+            // Combined RAG + Perplexity Search
             yield { type: "step", content: "Scanning Moroccan Legal Database..." };
 
-            const routeResult = await routeQuery(intent, userQuery);
-            let contextString = "";
-            let usedWebSearch = false;
+            const [routeResult, perplexityResults] = await Promise.all([
+                routeQuery(intent, userQuery),
+                perplexitySearch(userQuery)
+            ]);
+
+            let contextParts: string[] = [];
+            let allSources = routeResult.sources;
 
             if (routeResult.sources.length > 0) {
                 yield { type: "step", content: `Found ${routeResult.sources.length} relevant legal references.` };
-                yield { type: "citation", sources: routeResult.sources };
-                contextString = buildContext(routeResult.sources);
-            } else {
-                // Fallback: Web search
-                yield { type: "step", content: "No local results. Searching online sources..." };
-
-                const webResults = await webSearch(userQuery);
-                if (webResults) {
-                    contextString = `[Web Search Results]:\n${webResults}`;
-                    usedWebSearch = true;
-                    yield { type: "step", content: "Found online legal information." };
-                } else {
-                    yield { type: "step", content: "Using general legal knowledge..." };
-                }
-                yield { type: "citation", sources: [] };
+                contextParts.push(buildContext(routeResult.sources));
             }
 
-            yield { type: "step", content: "Formulating legal advice..." };
+            if (perplexityResults) {
+                yield { type: "step", content: "Enriching with online legal sources..." };
+                contextParts.push(`[Online Legal Sources]:\n${perplexityResults}`);
+            }
+
+            yield { type: "citation", sources: allSources };
+
+            let contextString = contextParts.length > 0 ? contextParts.join("\n\n---\n\n") : "";
+
+            // ═══════════════════════════════════════════════════════════
+            // REGULAR RESPONSE PATH
+            // ═══════════════════════════════════════════════════════════
+            yield { type: "step", content: "Formulating response..." };
 
             const userContent = contextString
-                ? `Context:\n${contextString}\n\n---\n\nQuestion: ${userQuery}${usedWebSearch ? "\n\n(Note: This uses web search results. Please verify with official sources.)" : ""}`
-                : `Question: ${userQuery}\n\n(No specific documents found. Provide general guidance based on Moroccan law principles.)`;
+                ? `Context:\n${contextString}\n\n---\n\nQuestion: ${userQuery}`
+                : `Question: ${userQuery}`;
 
             const stream = await client.chat.completions.create({
                 model: "google/gemini-3-flash-preview",
                 messages: [
-                    { role: "system", content: SYSTEM_PROMPT },
+                    { role: "system", content: SYSTEM_PROMPT + personalizationContext },
+                    ...history.slice(-6).map((m: any) => ({ role: m.role, content: m.content })),
                     { role: "user", content: buildUserContent(userContent) }
                 ],
                 stream: true,
-                // No max_tokens limit
             });
 
             for await (const chunk of stream) {
                 const content = chunk.choices[0]?.delta?.content || "";
                 if (content) yield { type: "token", content };
             }
+
         }
 
         yield { type: "done" };

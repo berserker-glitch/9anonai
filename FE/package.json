@@ -2,6 +2,9 @@
   "name": "my-app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,16 +12,22 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@formatjs/intl-localematcher": "^0.8.0",
+    "gray-matter": "^4.0.3",
     "highlight.js": "^11.11.1",
+    "negotiator": "^1.0.0",
     "next": "16.1.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "sharp": "^0.34.5",
+    "user-agent-data-types": "^0.4.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/negotiator": "^0.6.4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -34,5 +43,10 @@
   "trustedDependencies": [
     "sharp",
     "unrs-resolver"
+  ],
+  "browserslist": [
+    "defaults",
+    "not ie 11",
+    "not ie_mob 11"
   ]
 }

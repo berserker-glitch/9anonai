@@ -1,12 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import { Alata } from "next/font/google";
+import { Playfair_Display, Plus_Jakarta_Sans, Cairo } from "next/font/google";
+import { cookies } from "next/headers";
 import "./globals.css";
 import { Providers } from "@/components/providers/providers";
 
-const alata = Alata({
-  variable: "--font-alata",
+const playfair = Playfair_Display({
+  variable: "--font-playfair",
   subsets: ["latin"],
-  weight: ["400"],
+  weight: ["400", "500", "600", "700", "800"],
+});
+
+const jakarta = Plus_Jakarta_Sans({
+  variable: "--font-jakarta",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800"],
+});
+
+const cairo = Cairo({
+  variable: "--font-cairo",
+  subsets: ["arabic"],
+  weight: ["300", "400", "500", "600", "700", "800"],
 });
 
 export const viewport: Viewport = {
@@ -21,15 +34,20 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL("https://9anonai.com"),
   title: {
-    default: "9anon AI - قانون | مساعد قانوني مغربي ذكي",
+    default: "9anon AI | The Faster 9anoun Alternative (Free Access)",
     template: "%s | 9anon AI",
   },
   description:
-    "9anon AI (قانون) - المساعد القانوني الذكي للقانون المغربي. احصل على إجابات فورية حول القانون المغربي، الإجراءات القانونية، وحقوقك. متاح بالعربية والفرنسية والإنجليزية والدارجة. 9anon AI - Your intelligent Moroccan law assistant.",
+    "9anon AI (قانون / 9anoun) - المساعد القانوني الذكي للقانون المغربي. احصل على إجابات فورية حول القانون المغربي، الإجراءات القانونية، وحقوقك. متاح بالعربية والفرنسية والإنجليزية والدارجة. 9anon AI - Your intelligent Moroccan law assistant.",
   keywords: [
+    "AI Mohami Maroc",
+    "Istichara 9anounia AI",
     "9anon",
     "9anon ai",
     "9anon AI",
+    "9anoun",
+    "9anoun ai",
+    "kanoun ai",
     "قانون",
     "قانون ai",
     "qanon ai",
@@ -71,6 +89,7 @@ export const metadata: Metadata = {
       "en-US": "https://9anonai.com/en",
     },
   },
+  // icons and openGraph images removed to use file-based convention (icon.png)
   openGraph: {
     type: "website",
     locale: "ar_MA",
@@ -80,14 +99,6 @@ export const metadata: Metadata = {
     title: "9anon AI - قانون | مساعد قانوني مغربي ذكي",
     description:
       "المساعد القانوني الذكي للقانون المغربي. احصل على إجابات فورية حول حقوقك والإجراءات القانونية.",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "9anon AI - مساعد قانوني مغربي ذكي",
-      },
-    ],
   },
   twitter: {
     card: "summary_large_image",
@@ -96,7 +107,6 @@ export const metadata: Metadata = {
     title: "9anon AI - قانون | Moroccan Law AI Assistant",
     description:
       "Your intelligent Moroccan law assistant. Get instant legal answers in Arabic, French, English & Darija.",
-    images: ["/og-image.png"],
   },
   verification: {
     google: "google-site-verification-code",
@@ -115,7 +125,7 @@ const jsonLd = {
   "@context": "https://schema.org",
   "@type": "WebApplication",
   name: "9anon AI",
-  alternateName: ["قانون", "Qanon AI", "9anon", "Qanun AI"],
+  alternateName: ["قانون", "Qanon AI", "9anon", "Qanun AI", "9anoun", "9anoun AI", "Kanoun AI"],
   description:
     "AI-powered Moroccan law assistant providing instant legal guidance in Arabic, French, English, and Darija.",
   url: "https://9anonai.com",
@@ -125,6 +135,7 @@ const jsonLd = {
     "@type": "Offer",
     price: "0",
     priceCurrency: "MAD",
+    priceValidUntil: "2024-12-31",
   },
   provider: {
     "@type": "Organization",
@@ -141,25 +152,28 @@ const jsonLd = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const lang = cookieStore.get("NEXT_LOCALE")?.value || "ar";
+  const dir = lang === "ar" ? "rtl" : "ltr";
+
   return (
-    <html lang="ar" dir="ltr" suppressHydrationWarning>
+    <html lang={lang} dir="ltr" suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/favicon.ico" sizes="any" />
-        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/manifest.json" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className={`${alata.variable} font-sans antialiased`}>
-        <Providers>{children}</Providers>
+      <body className={`${playfair.variable} ${jakarta.variable} ${cairo.variable} font-sans antialiased`}>
+        <Providers lang={lang}>
+          {children}
+        </Providers>
       </body>
     </html>
   );

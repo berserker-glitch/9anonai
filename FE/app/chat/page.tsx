@@ -22,9 +22,10 @@ import { SourcesAccordion } from "@/components/chat/sources-accordion";
 
 // Interaction Components
 import { ChatInput } from "@/components/interaction/chat-input";
-import { AttachButton } from "@/components/interaction/attach-button";
 import { ScrollToBottom } from "@/components/utility/scroll-to-bottom";
 import { ConfirmModal } from "@/components/utility/modal";
+import { SettingsModal } from "@/components/settings/settings-modal";
+import { FilesModal } from "@/components/chat/files-modal";
 
 // UI Components
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +48,7 @@ interface Message {
     parentId?: string;
     images?: string[];
     files?: { name: string; type: string }[];
+    contract?: { title: string; path: string; type: string };
 }
 
 interface ChatHistory {
@@ -75,6 +77,8 @@ export default function NewChatPage() {
     const [chatToDelete, setChatToDelete] = useState<string | null>(null);
     const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
     const [showWelcome, setShowWelcome] = useState(true);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [filesModalOpen, setFilesModalOpen] = useState(false);
 
     const messageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -271,6 +275,7 @@ export default function NewChatPage() {
 
         let fullContent = "";
         let finalSources: any[] = [];
+        let finalContract: { title: string; path: string; type: string } | null = null;
 
         // Compress images
         const imageData: { data: string; mimeType: string }[] = [];
@@ -309,7 +314,10 @@ export default function NewChatPage() {
         try {
             const response = await fetch(`${API_URL}/chat`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                },
                 body: JSON.stringify({
                     message: content,
                     history: messages,
@@ -354,6 +362,23 @@ export default function NewChatPage() {
                                         m.id === assistantId ? { ...m, sources: finalSources } : m
                                     )
                                 );
+                            } else if (event.type === "contract_generated") {
+                                // Handle generated contract - add to message
+                                const doc = event.document;
+                                // Save for DB persistence - just store the doc ID
+                                finalContract = {
+                                    title: doc.title,
+                                    path: doc.id, // Just store the ID
+                                    type: doc.type
+                                };
+
+                                setMessages(prev =>
+                                    prev.map(m =>
+                                        m.id === assistantId
+                                            ? { ...m, contract: finalContract! } // Use the properly formatted contract
+                                            : m
+                                    )
+                                );
                             }
                         } catch (e) {
                             console.error("Parse error", e);
@@ -374,6 +399,8 @@ export default function NewChatPage() {
                         role: "assistant",
                         content: fullContent,
                         sources: JSON.stringify(finalSources),
+                        attachmentUrl: finalContract ? finalContract.path : null,
+                        attachmentName: finalContract ? finalContract.title : null
                     }),
                 });
             } catch (e) {
@@ -418,7 +445,10 @@ export default function NewChatPage() {
         try {
             const response = await fetch(`${API_URL}/chat`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                },
                 body: JSON.stringify({
                     message: userContent,
                     history: messages.filter(m => m.id !== assistantMsgId),
@@ -504,7 +534,12 @@ export default function NewChatPage() {
             <div className="flex h-screen bg-background">
                 {/* Sidebar */}
                 <Sidebar>
-                    <SidebarHeader onNewChat={handleNewChat} />
+                    <SidebarHeader
+                        onNewChat={handleNewChat}
+                        searchQuery={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        onOpenFiles={() => setFilesModalOpen(true)}
+                    />
                     <SidebarChatList>
                         {filteredChats.map(chat => (
                             <SidebarChatItem
@@ -527,29 +562,30 @@ export default function NewChatPage() {
                     {/* User Footer */}
                     <div className="p-3 border-t border-border mt-auto">
                         <div className="flex items-center gap-3 px-2">
-                            <Avatar fallback={user?.name?.[0] || user?.email?.[0] || "U"} size="md" isOnline />
+                            <button
+                                onClick={() => setSettingsOpen(true)}
+                                className="focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded-full"
+                                title="Open settings"
+                            >
+                                <Avatar fallback={user?.name?.[0] || user?.email?.[0] || "U"} size="md" isOnline />
+                            </button>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium truncate">{user?.name || user?.email}</p>
                                 <p className="text-xs text-muted-foreground">Free Plan</p>
                             </div>
-                            <button onClick={logout} className="p-1.5 rounded-lg hover:bg-accent" title="Logout">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                    <polyline points="16 17 21 12 16 7" />
-                                    <line x1="21" y1="12" x2="9" y2="12" />
-                                </svg>
-                            </button>
                             <ThemeToggle />
                         </div>
                     </div>
+
+
                 </Sidebar>
 
                 {/* Main Content */}
                 <main className="flex-1 flex flex-col min-w-0">
                     {showWelcome ? (
                         <div className="flex-1 flex flex-col items-center justify-center p-8">
-                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center mb-6 shadow-xl">
-                                <span className="text-white text-2xl font-bold">9</span>
+                            <div className="w-20 h-20 mb-6 shadow-xl rounded-2xl overflow-hidden bg-white">
+                                <img src="/9anon-logo.png" alt="9anon Logo" className="w-full h-full object-cover" />
                             </div>
                             <h1 className="text-3xl font-bold mb-2">Welcome to 9anon</h1>
                             <p className="text-muted-foreground mb-8 text-center max-w-md">
@@ -557,7 +593,7 @@ export default function NewChatPage() {
                             </p>
                             <div className="w-full max-w-2xl">
                                 <ChatInput onSubmit={handleSendMessage}>
-                                    <AttachButton onFilesSelected={handleFileUpload} />
+
                                     <div className="relative flex-1">
                                         {attachedFiles.length > 0 && (
                                             <div className="flex gap-2 mb-2 flex-wrap pb-2 border-b border-border">
@@ -662,9 +698,43 @@ export default function NewChatPage() {
                                                         {message.sources && message.sources.length > 0 && (
                                                             <SourcesAccordion sources={message.sources} />
                                                         )}
+                                                        {message.contract && (
+                                                            <div className="mt-4 p-4 bg-primary/10 rounded-lg border border-primary/20">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
+                                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-primary">
+                                                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                                                            <polyline points="14 2 14 8 20 8" />
+                                                                            <line x1="16" y1="13" x2="8" y2="13" />
+                                                                            <line x1="16" y1="17" x2="8" y2="17" />
+                                                                        </svg>
+                                                                    </div>
+                                                                    <div className="flex-1">
+                                                                        <p className="font-medium text-sm">{message.contract.title}</p>
+                                                                        <p className="text-xs text-muted-foreground">PDF Document</p>
+                                                                    </div>
+                                                                    <a
+                                                                        href={`https://api.9anonai.com/api/pdf/download/${message.contract.path.split('/').pop()}?token=${token}`}
+                                                                        download
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
+                                                                    >
+                                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                                                            <polyline points="7 10 12 15 17 10" />
+                                                                            <line x1="12" y1="15" x2="12" y2="3" />
+                                                                        </svg>
+                                                                        Download
+                                                                    </a>
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </AssistantMessage>
-                                                    <div className="flex items-center justify-between mt-2">
+                                                    {/* Actions aligned with message bubble (after avatar space) */}
+                                                    <div className="flex items-center gap-2 mt-1 ml-[52px] text-xs text-muted-foreground">
                                                         <MessageTimestamp date={message.timestamp} />
+                                                        <span className="text-muted-foreground/30">•</span>
                                                         <MessageActions
                                                             messageId={message.id}
                                                             content={message.content}
@@ -703,7 +773,7 @@ export default function NewChatPage() {
                     {/* Input Area when not in welcome mode */}
                     {!showWelcome && (
                         <ChatInput onSubmit={handleSendMessage} isLoading={isGenerating}>
-                            <AttachButton onFilesSelected={handleFileUpload} />
+
                             <div className="relative flex-1">
                                 {attachedFiles.length > 0 && (
                                     <div className="flex gap-2 mb-2 flex-wrap">
@@ -737,16 +807,30 @@ export default function NewChatPage() {
                         </ChatInput>
                     )}
                 </main>
-
-                {/* Delete Modal */}
-                <ConfirmModal
-                    isOpen={deleteModalOpen}
-                    onClose={() => setDeleteModalOpen(false)}
-                    onConfirm={handleDeleteChat}
-                    title="Delete Chat"
-                    description="Are you sure you want to delete this chat? This action cannot be undone."
-                />
             </div>
+
+            {/* Settings Modal - Placed outside of Sidebar to prevent containment */}
+            <SettingsModal
+                isOpen={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                user={user}
+                onLogout={logout}
+            />
+
+            <ConfirmModal
+                isOpen={deleteModalOpen}
+                onClose={() => setDeleteModalOpen(false)}
+                onConfirm={handleDeleteChat}
+                title="Delete chat?"
+                description="This will permanently delete this chat history."
+                confirmText="Delete"
+                variant="destructive"
+            />
+
+            <FilesModal
+                isOpen={filesModalOpen}
+                onClose={() => setFilesModalOpen(false)}
+            />
         </SidebarProvider>
     );
 }

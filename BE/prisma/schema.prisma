@@ -13,8 +13,14 @@ model User {
   password      String
   name          String?
   image         String?
+  personalization String? @db.Text
+  marketingSource String?
+  isOnboarded     Boolean   @default(false)
+  role          String    @default("user")  // "user" | "superadmin"
   createdAt     DateTime  @default(now())
   chats         Chat[]
+  files         UserFile[]
+  documents     GeneratedDocument[]
 }
 
 model Chat {
@@ -33,11 +39,37 @@ model Message {
   role      String
   content   String   @db.Text
   sources   String?  @db.Text
+  attachmentUrl String? // Link to generated PDF
+  attachmentName String? 
   feedback  String?  // "like" | "dislike" | null
   parentId  String?  // For regeneration versioning
   version   Int      @default(1)
   isActive  Boolean  @default(true)
   chatId    String
   chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model UserFile {
+  id           String   @id @default(cuid())
+  filename     String
+  originalName String
+  mimetype     String
+  size         Int
+  path         String
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+}
+
+model GeneratedDocument {
+  id        String   @id @default(cuid())
+  type      String   // "employment", "rental", "nda", "service", etc.
+  title     String
+  filename  String
+  path      String
+  metadata  String?  @db.Text // JSON of contract details
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }

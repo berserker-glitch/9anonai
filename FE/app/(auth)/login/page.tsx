@@ -16,7 +16,13 @@ export default function LoginPage() {
     // Redirect if already logged in
     useEffect(() => {
         if (user) {
-            router.push("/chat");
+            if (user.role === "superadmin") {
+                router.push("/admin");
+            } else if (!user.isOnboarded) {
+                router.push("/setup");
+            } else {
+                router.push("/chat");
+            }
         }
     }, [user, router]);
 
@@ -27,11 +33,10 @@ export default function LoginPage() {
 
         const result = await login(email, password);
 
-        if (result.success) {
-            router.push("/chat");
-        } else {
+        if (!result.success) {
             setError(result.error || "Login failed");
         }
+        // Redirect is handled by useEffect when user state updates
         setIsLoading(false);
     };
 
