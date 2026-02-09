@@ -6,6 +6,8 @@ import { Header } from "@/components/landing/header";
 import { Footer } from "@/components/landing/footer";
 import { ExpandedLandingSections } from "@/components/landing/expanded-sections";
 import { useTranslation, useLanguage } from "@/lib/language-context";
+import LiquidEther from "@/components/landing/liquid-ether";
+import CardSwap, { Card } from "@/components/landing/card-swap";
 
 export default function LandingPage() {
   const { t } = useTranslation("landing");
@@ -41,24 +43,21 @@ export default function LandingPage() {
 
       {/* Hero Section */}
       <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 lg:pt-48 lg:pb-36 overflow-hidden">
-        {/* Background Layers */}
-        <div className="absolute inset-0 bg-dots opacity-30" />
-        <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-muted/30" />
-
-        {/* Floating Orbs - Enhanced */}
-        <div className="absolute top-20 right-[10%] w-[500px] h-[500px] bg-gradient-to-br from-primary/25 to-gold/15 rounded-full blur-[120px] animate-morph opacity-60 animate-orb-1" />
-        <div className="absolute bottom-20 left-[5%] w-[400px] h-[400px] bg-gradient-to-br from-gold/20 to-primary/10 rounded-full blur-[100px] animate-morph opacity-50 animate-orb-2" style={{ animationDelay: '-4s' }} />
-        <div className="absolute top-40 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-gradient-to-br from-primary/10 to-transparent rounded-full blur-[150px] will-change-transform" />
-
-        {/* Decorative Elements - Enhanced */}
-        <div className="absolute top-32 left-[15%] w-16 h-16 border border-gold/30 rounded-2xl rotate-12 animate-float-gentle opacity-40 backdrop-blur-sm" style={{ '--float-rotate': '12deg' } as React.CSSProperties} />
-        <div className="absolute top-60 right-[20%] w-12 h-12 bg-gradient-to-br from-primary/20 to-primary/5 rounded-xl -rotate-12 animate-float-gentle opacity-50 backdrop-blur-sm shadow-lg" style={{ animationDelay: '-2s', '--float-rotate': '-12deg' } as React.CSSProperties} />
-        <div className="absolute bottom-40 left-[25%] w-8 h-8 border border-primary/30 rounded-lg rotate-45 animate-float-gentle opacity-30 backdrop-blur-sm" style={{ animationDelay: '-3s', '--float-rotate': '45deg' } as React.CSSProperties} />
-
-        {/* Additional floating particles */}
-        <div className="absolute top-1/4 left-[20%] w-2 h-2 bg-primary/40 rounded-full animate-pulse-subtle" />
-        <div className="absolute top-1/3 right-[30%] w-3 h-3 bg-gold/30 rounded-full animate-pulse-subtle" style={{ animationDelay: '0.5s' }} />
-        <div className="absolute bottom-1/4 left-[40%] w-2 h-2 bg-primary/50 rounded-full animate-pulse-subtle" style={{ animationDelay: '1s' }} />
+        {/* Liquid Ether Background */}
+        <div className="absolute inset-0 z-0">
+          <LiquidEther
+            colors={['#10B981', '#FFD700', '#059669']} // Emerald and Gold colors
+            mouseForce={30}
+            cursorSize={80}
+            isViscous={true}
+            viscous={20}
+            autoDemo={true}
+            autoIntensity={2.5}
+          // style={{ opacity: 0.7 }}
+          />
+          {/* subtle overlay to ensure text readability */}
+          <div className="absolute inset-0 bg-background/30 backdrop-blur-[1px]" />
+        </div>
 
         <div className="relative max-w-7xl mx-auto px-6 sm:px-8 lg:px-12">
           <div className="text-center max-w-5xl mx-auto" ref={heroRef}>
@@ -236,107 +235,154 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Features Section - Enhanced */}
-      <section id="features" className="py-24 lg:py-32 relative">
-        <div className="absolute inset-0 bg-gradient-to-b from-muted/20 via-transparent to-muted/20" />
-        <div className="absolute top-1/2 right-0 w-[400px] h-[400px] bg-primary/10 rounded-full blur-[150px] opacity-50 animate-pulse-gentle" />
+      {/* Features Section - Enhanced with CardSwap */}
+      <section id="features" className="py-24 lg:py-32 relative overflow-visible z-10">
+        <div className="absolute inset-0 bg-gradient-to-b from-muted/20 via-transparent to-muted/20 pointer-events-none" />
 
         <div className="relative max-w-7xl mx-auto px-6 sm:px-8 lg:px-12">
-          <div className="text-center mb-16 lg:mb-20 scroll-animate opacity-0 transform translate-y-8 transition-all duration-700">
-            <span className="inline-block px-4 py-1.5 bg-primary/10 text-primary text-sm font-semibold rounded-full mb-6 border border-primary/20 hover:bg-primary/20 transition-colors duration-300">
-              {t("features.sectionTag")}
-            </span>
-            <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl font-bold mb-6 tracking-tight">
-              {t("features.sectionTitle")} <span className="text-gradient-emerald">{t("features.brand")}</span>؟
-            </h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto text-lg">
-              {t("features.sectionDescription")}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-            {[
-              {
-                icon: (
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
-                  </svg>
-                ),
-                titleKey: "features.expertTitle",
-                descKey: "features.expertDesc",
-                color: "primary",
-              },
-              {
-                icon: (
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-                  </svg>
-                ),
-                titleKey: "features.multilingualTitle",
-                descKey: "features.multilingualDesc",
-                color: "gold",
-              },
-              {
-                icon: (
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                ),
-                titleKey: "features.instantTitle",
-                descKey: "features.instantDesc",
-                color: "primary",
-              },
-              {
-                icon: (
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                ),
-                titleKey: "features.sourcesTitle",
-                descKey: "features.sourcesDesc",
-                color: "gold",
-              },
-              {
-                icon: (
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                ),
-                titleKey: "features.secureTitle",
-                descKey: "features.secureDesc",
-                color: "primary",
-              },
-              {
-                icon: (
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                  </svg>
-                ),
-                titleKey: "features.freeTitle",
-                descKey: "features.freeDesc",
-                color: "gold",
-              },
-            ].map((feature, i) => (
-              <div
-                key={i}
-                className="scroll-animate opacity-0 transform translate-y-8 group relative glass-premium rounded-2xl p-8 hover:border-primary/40 transition-[opacity,transform,border-color,box-shadow] duration-500 hover:shadow-xl hover:shadow-primary/5 hover:-translate-y-2 hover:scale-[1.02]"
-              >
-                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 transition-all duration-300 group-hover:scale-110 ${feature.color === 'gold'
-                  ? 'bg-gradient-to-br from-gold/20 to-gold/5 text-gold border border-gold/20 group-hover:shadow-lg group-hover:shadow-gold/20'
-                  : 'bg-gradient-to-br from-primary/20 to-primary/5 text-primary border border-primary/20 group-hover:shadow-lg group-hover:shadow-primary/20'
-                  }`}>
-                  {feature.icon}
-                </div>
-                <h3 className="text-xl font-display font-semibold mb-3 group-hover:text-foreground transition-colors">{t(feature.titleKey)}</h3>
-                <p className="text-muted-foreground leading-relaxed group-hover:text-foreground/90 transition-colors">{t(feature.descKey)}</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+            {/* Left Column - Text Content */}
+            <div className="text-right lg:text-right scroll-animate opacity-0 transform translate-x-8 transition-all duration-700 z-10">
+              <span className="inline-block px-4 py-1.5 bg-primary/10 text-primary text-sm font-semibold rounded-full mb-6 border border-primary/20 hover:bg-primary/20 transition-colors duration-300">
+                {t("features.sectionTag")}
+              </span>
+              <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl font-bold mb-8 tracking-tight leading-tight">
+                {t("features.sectionTitle")} <br />
+                <span className="text-gradient-emerald">{t("features.brand")}</span>؟
+              </h2>
+              <p className="text-muted-foreground max-w-xl ml-auto text-lg leading-relaxed mb-10">
+                {t("features.sectionDescription")}
+              </p>
+              <div className="flex flex-wrap gap-4 justify-end">
+                <button className="btn-premium px-8 py-3 text-base font-medium bg-primary text-primary-foreground rounded-xl shadow-lg hover:shadow-primary/25 hover:scale-105 transition-all">
+                  {t("hero.ctaPrimary")}
+                </button>
+                <button className="px-8 py-3 text-base font-medium glass-premium rounded-xl hover:bg-primary/5 transition-all">
+                  {t("hero.ctaSecondary")}
+                </button>
               </div>
-            ))}
+            </div>
+
+            {/* Right Column - CardSwap 3D Animation */}
+            <div className="relative h-[600px] w-full flex items-center justify-center lg:justify-end">
+              {/* Decorative background blur for cards */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-gradient-to-br from-primary/20 to-gold/10 rounded-full blur-[100px] opacity-60" />
+
+              <div className="relative w-full h-full scale-100 sm:scale-100 lg:scale-[1.1] origin-center lg:origin-right">
+                <CardSwap
+                  width={380}
+                  height={500}
+                  cardDistance={40}
+                  verticalDistance={40}
+                  delay={4000}
+                  skewAmount={4}
+                  pauseOnHover={true}
+                >
+                  {[
+                    {
+                      icon: (
+                        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                        </svg>
+                      ),
+                      titleKey: "features.expertTitle",
+                      descKey: "features.expertDesc",
+                      color: "primary",
+                    },
+                    {
+                      icon: (
+                        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                        </svg>
+                      ),
+                      titleKey: "features.multilingualTitle",
+                      descKey: "features.multilingualDesc",
+                      color: "gold",
+                    },
+                    {
+                      icon: (
+                        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                      ),
+                      titleKey: "features.instantTitle",
+                      descKey: "features.instantDesc",
+                      color: "primary",
+                    },
+                    {
+                      icon: (
+                        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      ),
+                      titleKey: "features.sourcesTitle",
+                      descKey: "features.sourcesDesc",
+                      color: "gold",
+                    },
+                    {
+                      icon: (
+                        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                      ),
+                      titleKey: "features.secureTitle",
+                      descKey: "features.secureDesc",
+                      color: "primary",
+                    },
+                    {
+                      icon: (
+                        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                      ),
+                      titleKey: "features.freeTitle",
+                      descKey: "features.freeDesc",
+                      color: "gold",
+                    },
+                  ].map((feature, i) => (
+                    <Card
+                      key={i}
+                      className={`
+                        !bg-[#050B07] !backdrop-blur-xl !border-white/10 shadow-2xl // Custom dark bg
+                        flex flex-col items-center justify-center p-8 text-center
+                        group cursor-pointer hover:!border-${feature.color}/50 transition-colors
+                      `}
+                    >
+                      {/* Inner Shine Effect */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none rounded-xl" />
+
+                      <div className={`
+                        w-24 h-24 rounded-3xl flex items-center justify-center mb-8
+                        transition-all duration-500 group-hover:scale-110 group-hover:rotate-3
+                        ${feature.color === 'gold'
+                          ? 'bg-gradient-to-br from-gold/20 to-gold/5 text-gold border border-gold/20 shadow-lg shadow-gold/10'
+                          : 'bg-gradient-to-br from-primary/20 to-primary/5 text-primary border border-primary/20 shadow-lg shadow-primary/10'
+                        }
+                      `}>
+                        {feature.icon}
+                      </div>
+
+                      <h3 className="text-3xl font-display font-bold mb-4 text-foreground group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-foreground group-hover:to-foreground/80 transition-all">
+                        {t(feature.titleKey)}
+                      </h3>
+
+                      <p className="text-muted-foreground text-lg leading-relaxed max-w-[85%] mx-auto">
+                        {t(feature.descKey)}
+                      </p>
+
+                      {/* Decorative corner accent */}
+                      <div className={`absolute top-4 right-4 w-2 h-2 rounded-full opacity-50 ${feature.color === 'gold' ? 'bg-gold' : 'bg-primary'}`} />
+                    </Card>
+                  ))}
+                </CardSwap>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       {/* How It Works - Enhanced */}
-      <section id="about" className="py-24 lg:py-32 bg-muted/30 relative overflow-hidden">
+      <section id="about" className="py-24 lg:py-32 bg-muted/30 relative overflow-hidden z-0">
         <div className="absolute inset-0 bg-zellige opacity-5" />
         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-gold/10 rounded-full blur-[150px] opacity-40 animate-pulse-gentle" />
 

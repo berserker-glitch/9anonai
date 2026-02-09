@@ -1,6 +1,22 @@
 import { MetadataRoute } from "next";
 import { getAllPosts } from "@/lib/blog";
 
+/**
+ * Safely parse a date string to a valid Date object.
+ * Falls back to current date if parsing fails.
+ * @param dateString - The date string to parse (e.g., "2026-02-07")
+ * @returns A valid Date object
+ */
+function parseDate(dateString: string): Date {
+    const parsed = new Date(dateString);
+    // Check for invalid date (NaN timestamp = 1970-01-01 issue)
+    if (isNaN(parsed.getTime())) {
+        console.warn(`[Sitemap] Invalid date "${dateString}", using current date`);
+        return new Date();
+    }
+    return parsed;
+}
+
 export default function sitemap(): MetadataRoute.Sitemap {
     const baseUrl = "https://9anonai.com";
 
@@ -33,7 +49,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
         languages.forEach((lang) => {
             blogUrls.push({
                 url: `${baseUrl}/${lang}/blog/${post.slug}`,
-                lastModified: new Date(post.date),
+                lastModified: parseDate(post.date),
                 changeFrequency: "weekly" as const,
                 priority: 0.7,
                 alternates: {
@@ -45,14 +61,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
                 }
             });
         });
-
-        // 3. Keep Legacy URLs (pointing to Arabic implies canonical is /ar)
-        blogUrls.push({
-            url: `${baseUrl}/blog/${post.slug}`,
-            lastModified: new Date(post.date),
-            changeFrequency: "weekly" as const,
-            priority: 0.7,
-        });
+        // NOTE: Legacy /blog/{slug} URLs removed - they now redirect to /ar/blog/{slug}
     });
 
     return [
@@ -87,12 +96,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
             changeFrequency: "monthly",
             priority: 0.5,
         },
-        {
-            url: `${baseUrl}/about`,
-            lastModified: new Date(),
-            changeFrequency: 'monthly',
-            priority: 0.8,
-        },
+        // NOTE: /about removed - page doesn't exist in app directory
         {
             url: `${baseUrl}/vs-9anoun`,
             lastModified: new Date(),
@@ -117,12 +121,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
             changeFrequency: 'weekly',
             priority: 0.85,
         },
-        {
-            url: `${baseUrl}/blog`,
-            lastModified: new Date(),
-            changeFrequency: 'weekly',
-            priority: 0.8,
-        },
+        // NOTE: Legacy /blog index removed - localized /ar/blog, /en/blog, /fr/blog are in blogUrls
         ...blogUrls,
     ];
 }
