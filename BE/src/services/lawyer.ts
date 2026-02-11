@@ -436,9 +436,30 @@ INSTRUCTIONS:
             // ═══════════════════════════════════════════════════════════
             yield { type: "step", content: "Formulating response..." };
 
+            // Add confidence/quality hints to the context
+            let confidenceNote = "";
+            if (routeResult.confidenceLevel === "high") {
+                confidenceNote = "HIGH CONFIDENCE: The provided legal documents are highly relevant to the query.";
+            } else if (routeResult.confidenceLevel === "medium") {
+                confidenceNote = "MODERATE CONFIDENCE: The provided documents are relevant but may not cover every detail.";
+            } else if (routeResult.confidenceLevel === "low") {
+                confidenceNote = "LOW CONFIDENCE: The provided documents might be only tangentially relevant. rely more on general legal principles and state this uncertainty.";
+            } else if (routeResult.sources.length === 0) {
+                confidenceNote = "NO DOCUMENTS FOUND: Answer based on your general knowledge of Moroccan law, but clearly warn the user that no specific source was found in the database.";
+            }
+
+            // Hard language enforcement — placed AFTER context (strongest position)
+            // The context is in Arabic but the user may be asking in French/English
+            const langLabel: Record<string, string> = {
+                en: "MANDATORY: You MUST respond ENTIRELY in English. The context documents are in Arabic but your response MUST be in English.",
+                fr: "OBLIGATOIRE: Vous DEVEZ répondre ENTIÈREMENT en français. Les documents de contexte sont en arabe mais votre réponse DOIT être en français.",
+                ar: "يجب أن تكون إجابتك بالكامل باللغة العربية."
+            };
+            const langDirective = langLabel[userLang] || langLabel.en;
+
             const userContent = contextString
-                ? `Context:\n${contextString}\n\n---\n\nQuestion: ${userQuery}`
-                : `Question: ${userQuery}`;
+                ? `[System Note]: ${confidenceNote}\n\nContext:\n${contextString}\n\n---\n\n[LANGUAGE RULE]: ${langDirective}\n\nQuestion: ${userQuery}`
+                : `[System Note]: ${confidenceNote}\n\n[LANGUAGE RULE]: ${langDirective}\n\nQuestion: ${userQuery}`;
 
             const stream = await client.chat.completions.create({
                 model: "google/gemini-3-flash-preview",
