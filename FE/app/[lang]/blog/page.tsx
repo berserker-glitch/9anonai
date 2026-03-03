@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Header } from "@/components/landing/header";
 import { Footer } from "@/components/landing/footer";
 import { getAllPosts, BlogLanguage } from "@/lib/blog";
+import { Breadcrumbs } from "@/components/blog/breadcrumbs";
+import { BlogGrid } from "@/components/blog/blog-grid";
 
 export async function generateMetadata({ params }: { params: Promise<{ lang: BlogLanguage }> }) {
     const { lang } = await params;
@@ -36,6 +38,7 @@ export default async function BlogIndex({ params }: { params: Promise<{ lang: Bl
     const { lang } = await params;
     const posts = getAllPosts(lang);
     const dir = lang === "ar" ? "rtl" : "ltr";
+    const isRtl = lang === "ar";
 
     const labels = {
         ar: {
@@ -44,6 +47,8 @@ export default async function BlogIndex({ params }: { params: Promise<{ lang: Bl
             desc: "اكتشف أحدث المقالات والتحليلات حول القانون المغربي، الإصلاحات الجديدة، والنصائح القانونية.",
             readMore: "اقرأ المزيد",
             category: "قانون",
+            featured: "مقال مميز",
+            readTime: (min: number) => `${min} دقائق قراءة`,
         },
         fr: {
             title: "Blog",
@@ -51,6 +56,8 @@ export default async function BlogIndex({ params }: { params: Promise<{ lang: Bl
             desc: "Découvrez les derniers articles et analyses sur le droit marocain, les nouvelles réformes et des conseils juridiques.",
             readMore: "Lire la suite",
             category: "Droit",
+            featured: "Article en vedette",
+            readTime: (min: number) => `${min} min de lecture`,
         },
         en: {
             title: "Legal",
@@ -58,16 +65,53 @@ export default async function BlogIndex({ params }: { params: Promise<{ lang: Bl
             desc: "Discover the latest articles and analysis on Moroccan law, new reforms, and legal advice.",
             readMore: "Read More",
             category: "Law",
+            featured: "Featured Article",
+            readTime: (min: number) => `${min} min read`,
         },
     };
 
     const t = labels[lang] || labels.ar;
 
+    // JSON-LD for Blog listing page
+    const jsonLd = {
+        "@context": "https://schema.org",
+        "@type": "Blog",
+        "name": `${t.title} ${t.subtitle}`,
+        "description": t.desc,
+        "url": `https://9anonai.com/${lang}/blog`,
+        "publisher": {
+            "@type": "Organization",
+            "name": "9anon AI",
+            "url": "https://9anonai.com",
+        },
+        "blogPost": posts.slice(0, 10).map(post => ({
+            "@type": "BlogPosting",
+            "headline": post.title,
+            "description": post.description,
+            "datePublished": post.date,
+            "url": `https://9anonai.com/${lang}/blog/${post.slug}`,
+        })),
+    };
+
     return (
         <div className="min-h-screen bg-background text-foreground font-sans" dir={dir}>
+            {/* Blog listing JSON-LD */}
+            <script
+                type="application/ld+json"
+                dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+            />
+
             <Header />
 
             <main className="pt-32 pb-20 px-6 sm:px-8 lg:px-12 max-w-7xl mx-auto">
+                {/* Breadcrumbs */}
+                <Breadcrumbs
+                    items={[
+                        { label: "9anon AI", href: "/" },
+                        { label: `${t.title} ${t.subtitle}` },
+                    ]}
+                />
+
                 <div className="text-center mb-16">
                     <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-bold mb-6 tracking-tight">
                         {t.title} <span className="text-gradient-emerald">{t.subtitle}</span>
@@ -77,47 +121,8 @@ export default async function BlogIndex({ params }: { params: Promise<{ lang: Bl
                     </p>
                 </div>
 
-                <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
-                    {posts.map((post) => (
-                        <Link
-                            key={post.slug}
-                            href={`/${lang}/blog/${post.slug}`}
-                            className="group relative flex flex-col glass-premium rounded-2xl overflow-hidden hover:shadow-xl transition-all duration-300 hover:-translate-y-1 border border-border/40"
-                        >
-                            <div className="p-6 md:p-8 flex flex-col h-full">
-                                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                                    <time dateTime={post.date}>
-                                        {new Date(post.date).toLocaleDateString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US", {
-                                            year: "numeric",
-                                            month: "long",
-                                            day: "numeric",
-                                        })}
-                                    </time>
-                                    <span>•</span>
-                                    <span>{t.category}</span>
-                                </div>
-
-                                <h2 className="text-xl font-display font-bold mb-3 group-hover:text-primary transition-colors line-clamp-2 leading-tight">
-                                    {post.title}
-                                </h2>
-
-                                <p className="text-muted-foreground line-clamp-3 mb-6 flex-1 text-sm leading-relaxed">
-                                    {post.description}
-                                </p>
-
-                                <div className="mt-auto flex items-center text-primary font-medium text-sm">
-                                    <span>{t.readMore}</span>
-                                    <svg className={`w-4 h-4 mx-2 ${dir === "rtl" ? "rotate-180" : ""} transition-transform group-hover:translate-x-1`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                                    </svg>
-                                </div>
-                            </div>
-
-                            {/* Hover Glow Effect */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-gold/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-                        </Link>
-                    ))}
-                </div>
+                {/* Interactive Blog Grid with Categories */}
+                <BlogGrid posts={posts} lang={lang} dir={dir} />
             </main>
 
             <Footer />

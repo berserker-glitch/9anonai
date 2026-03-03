@@ -10,8 +10,10 @@ interface UserStats {
     name: string | null;
     role: string;
     createdAt: string;
+    marketingSource: string | null;
     conversationCount: number;
     messageCount: number;
+    lastActive: string;
 }
 
 interface SystemStats {
@@ -45,7 +47,7 @@ export default function AdminDashboard() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
-    const [sortField, setSortField] = useState<"conversationCount" | "messageCount" | "createdAt">("createdAt");
+    const [sortField, setSortField] = useState<"conversationCount" | "messageCount" | "createdAt" | "lastActive">("lastActive");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
     // Drawer state
@@ -99,8 +101,8 @@ export default function AdminDashboard() {
         )
         .sort((a, b) => {
             let comparison = 0;
-            if (sortField === "createdAt") {
-                comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+            if (sortField === "createdAt" || sortField === "lastActive") {
+                comparison = new Date(a[sortField]).getTime() - new Date(b[sortField]).getTime();
             } else {
                 comparison = a[sortField] - b[sortField];
             }
@@ -153,6 +155,58 @@ export default function AdminDashboard() {
         } finally {
             setDrawerLoading(false);
         }
+    };
+
+    const handleExport = () => {
+        const headers = ["ID", "Email", "Name", "Role", "Created At", "Marketing Source", "Conversations", "Messages"];
+        const csvContent = [
+            headers.join(","),
+            ...users.map(u => [
+                u.id,
+                u.email,
+                `"${u.name || ""}"`,
+                u.role,
+                new Date(u.createdAt).toISOString(),
+                u.marketingSource || "",
+                u.conversationCount,
+                u.messageCount,
+                new Date(u.lastActive).toISOString()
+            ].join(","))
+        ].join("\n");
+
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `users_export_${new Date().toISOString().split("T")[0]}.csv`);
+            link.style.visibility = "hidden";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    };
+
+    const handleRefresh = () => {
+        setIsLoading(true);
+        Promise.all([
+            fetch(`${API_URL}/admin/users`, {
+                headers: { Authorization: `Bearer ${token}` },
+            }).then(res => res.json()),
+            fetch(`${API_URL}/admin/stats`, {
+                headers: { Authorization: `Bearer ${token}` },
+            }).then(res => res.json())
+        ])
+            .then(([usersData, statsData]) => {
+                if (usersData.users) setUsers(usersData.users);
+                if (statsData.totalUsers !== undefined) setStats(statsData);
+                setIsLoading(false);
+            })
+            .catch(err => {
+                console.error("Failed to fetch admin data:", err);
+                setError("Failed to load dashboard data");
+                setIsLoading(false);
+            });
     };
 
     // Fetch messages for selected conversation
@@ -281,26 +335,51 @@ export default function AdminDashboard() {
                     <div className="p-6 border-b border-border">
                         <div className="flex items-center justify-between gap-4">
                             <h2 className="text-lg font-semibold">All Users</h2>
-                            <div className="relative">
-                                <input
-                                    type="text"
-                                    placeholder="Search users..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-64 px-4 py-2 pl-10 rounded-xl border border-border bg-input text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                                />
-                                <svg
-                                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={handleRefresh}
+                                    className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+                                    title="Refresh Data"
                                 >
-                                    <circle cx="11" cy="11" r="8" />
-                                    <path d="m21 21-4.35-4.35" />
-                                </svg>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                        <path d="M3 3v5h5" />
+                                        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                                        <path d="M16 21h5v-5" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={handleExport}
+                                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors"
+                                >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                        <polyline points="7 10 12 15 17 10" />
+                                        <line x1="12" y1="15" x2="12" y2="3" />
+                                    </svg>
+                                    Export CSV
+                                </button>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        placeholder="Search users..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="w-64 px-4 py-2 pl-10 rounded-xl border border-border bg-input text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                    />
+                                    <svg
+                                        className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                    >
+                                        <circle cx="11" cy="11" r="8" />
+                                        <path d="m21 21-4.35-4.35" />
+                                    </svg>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -342,6 +421,19 @@ export default function AdminDashboard() {
                                             )}
                                         </div>
                                     </th>
+                                    <th className="text-left px-6 py-4 text-sm font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                                        onClick={() => handleSort("lastActive")}
+                                    >
+                                        <div className="flex items-center gap-1">
+                                            Last Active
+                                            {sortField === "lastActive" && (
+                                                <span>{sortOrder === "asc" ? "↑" : "↓"}</span>
+                                            )}
+                                        </div>
+                                    </th>
+                                    <th className="text-left px-6 py-4 text-sm font-medium text-muted-foreground">
+                                        Marketing
+                                    </th>
                                     <th className="text-left px-6 py-4 text-sm font-medium text-muted-foreground">
                                         Actions
                                     </th>
@@ -378,6 +470,18 @@ export default function AdminDashboard() {
                                         <td className="px-6 py-4 text-muted-foreground">
                                             {formatDate(u.createdAt)}
                                         </td>
+                                        <td className="px-6 py-4 text-muted-foreground">
+                                            {formatTime(u.lastActive)}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            {u.marketingSource ? (
+                                                <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-medium bg-secondary text-secondary-foreground border border-border">
+                                                    {u.marketingSource}
+                                                </span>
+                                            ) : (
+                                                <span className="text-muted-foreground text-sm">—</span>
+                                            )}
+                                        </td>
                                         <td className="px-6 py-4">
                                             <button
                                                 onClick={() => handleViewConversations(u)}
@@ -390,7 +494,7 @@ export default function AdminDashboard() {
                                 ))}
                                 {filteredUsers.length === 0 && (
                                     <tr>
-                                        <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                                        <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                                             No users found
                                         </td>
                                     </tr>
@@ -460,8 +564,8 @@ export default function AdminDashboard() {
                                             >
                                                 <div
                                                     className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${msg.role === "user"
-                                                            ? "bg-primary text-primary-foreground"
-                                                            : "bg-muted"
+                                                        ? "bg-primary text-primary-foreground"
+                                                        : "bg-muted"
                                                         }`}
                                                 >
                                                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>

@@ -1,20 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Header } from "@/components/landing/header";
 import { Footer } from "@/components/landing/footer";
 import { ExpandedLandingSections } from "@/components/landing/expanded-sections";
 import { useTranslation, useLanguage } from "@/lib/language-context";
 import LiquidEther from "@/components/landing/liquid-ether";
 import CardSwap, { Card } from "@/components/landing/card-swap";
+import { BlogHighlights } from "@/components/landing/blog-highlights";
 
 export default function LandingPage() {
   const { t } = useTranslation("landing");
-  const { dir } = useLanguage();
+  const { dir, language: lang } = useLanguage();
 
   const heroRef = useRef<HTMLDivElement>(null);
   const chatPreviewRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Detect mobile on mount.
+   * We skip LiquidEther (3JS WebGL, ~580 KB) on mobile to avoid blocking
+   * the main thread before the hero h1 renders — the primary LCP killer.
+   */
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    // Run once on mount — window is safe here (client only)
+    setIsMobile(window.innerWidth < 768);
+  }, []);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -43,19 +56,29 @@ export default function LandingPage() {
 
       {/* Hero Section */}
       <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 lg:pt-48 lg:pb-36 overflow-hidden">
-        {/* Liquid Ether Background */}
+        {/* Hero background: static gradient on mobile (LCP fix), WebGL on desktop */}
         <div className="absolute inset-0 z-0">
-          <LiquidEther
-            colors={['#10B981', '#FFD700', '#059669']} // Emerald and Gold colors
-            mouseForce={30}
-            cursorSize={80}
-            isViscous={true}
-            viscous={20}
-            autoDemo={true}
-            autoIntensity={2.5}
-          // style={{ opacity: 0.7 }}
-          />
-          {/* subtle overlay to ensure text readability */}
+          {isMobile ? (
+            // Static CSS gradient — zero JS, paints instantly on mobile
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(16,185,129,0.18) 0%, rgba(255,215,0,0.08) 50%, transparent 100%)",
+              }}
+            />
+          ) : (
+            <LiquidEther
+              colors={['#10B981', '#FFD700', '#059669']}
+              mouseForce={30}
+              cursorSize={80}
+              isViscous={true}
+              viscous={20}
+              autoDemo={true}
+              autoIntensity={2.5}
+            />
+          )}
+          {/* Overlay for text readability */}
           <div className="absolute inset-0 bg-background/30 backdrop-blur-[1px]" />
         </div>
 
@@ -418,6 +441,9 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* Blog Highlights — image-rich posts for homepage SEO internal linking */}
+      <BlogHighlights lang={lang} />
 
       {/* CTA Section - Enhanced */}
       <section className="py-24 lg:py-32 relative overflow-hidden">

@@ -19,9 +19,6 @@ const router = Router();
 /**
  * Schema for chat request body validation.
  */
-/**
- * Schema for chat request body validation.
- */
 const ChatSchema = z.object({
     /** User's message/question */
     message: z.string().min(1, "Message cannot be empty"),
@@ -65,11 +62,14 @@ router.post("/", optionalAuth, async (req: Request, res: Response) => {
         const { message, history, images, chatId } = ChatSchema.parse(req.body);
         const userId = (req as AuthenticatedRequest).userId;
 
+        console.log(`[CHAT] Incoming | UserId: ${userId || 'guest'} | ChatId: ${chatId || 'none'} | Msg: ${message.substring(0, 30)}...`);
+
         // Log chat event
         logChatEvent("stream_start", userId || null, {
             messageLength: message.length,
             historyLength: history?.length || 0,
-            imageCount: images?.length || 0
+            imageCount: images?.length || 0,
+            chatId: chatId || "none"
         });
 
         // Start streaming response
@@ -83,12 +83,13 @@ router.post("/", optionalAuth, async (req: Request, res: Response) => {
         let fullContent = "";
         let sources: any[] = [];
         let contract: any = null;
+        let clientDisconnected = false;
 
         // Stream events to client
+        // NOTE: Accumulate content BEFORE writing to client —
+        // ensures data is captured even if client disconnects mid-stream
         for await (const event of stream) {
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
-
-            // Accumulate response data for persistence
+            // Accumulate response data for persistence FIRST
             if (event.type === "token") {
                 fullContent += event.content;
             } else if (event.type === "citation") {
@@ -100,6 +101,21 @@ router.post("/", optionalAuth, async (req: Request, res: Response) => {
                     type: event.document.type
                 } : null;
             }
+
+            // Write to client — wrapped to handle disconnect gracefully
+            try {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            } catch (writeError) {
+                // Client/proxy closed the connection mid-stream
+                // Break the loop but still proceed to save accumulated content
+                clientDisconnected = true;
+                logger.warn(`[CHAT] Client disconnected mid-stream`, {
+                    chatId: chatId || "none",
+                    userId: userId || "guest",
+                    contentLength: fullContent.length
+                });
+                break;
+            }
         }
 
         // Save completed message to database if chatId is provided
@@ -107,17 +123,19 @@ router.post("/", optionalAuth, async (req: Request, res: Response) => {
             try {
                 // If user is authenticated, verify chat ownership before saving
                 if (userId) {
-                    const chat = await prisma.chat.findUnique({
+                    const chat = await prisma.chat.findFirst({
                         where: { id: chatId, userId },
                         select: { id: true }
                     });
 
                     if (chat) {
+                        const messageSources = sources.length > 0 ? JSON.stringify(sources) : null;
+
                         await prisma.message.create({
                             data: {
                                 role: "assistant",
                                 content: fullContent,
-                                sources: sources.length > 0 ? JSON.stringify(sources) : null,
+                                sources: messageSources,
                                 attachmentUrl: contract ? contract.path : null,
                                 attachmentName: contract ? contract.title : null,
                                 chatId,
@@ -132,19 +150,35 @@ router.post("/", optionalAuth, async (req: Request, res: Response) => {
                             data: { updatedAt: new Date() }
                         });
 
-                        logger.debug(`[CHAT] Saved assistant response to chat ${chatId}`);
+                        logger.info(`[CHAT] Saved assistant response to chat ${chatId}`);
+                        console.log(`✅ [PERSISTENCE] Saved to chat ${chatId}`);
                     } else {
-                        logger.warn(`[CHAT] Skipped saving: Chat ${chatId} not found or not owned by user ${userId}`);
+                        logger.warn(`[CHAT] Skipped saving: Chat ${chatId} not found or mismatch for user ${userId}`);
+                        console.log(`⚠️ [PERSISTENCE] Chat ${chatId} not found or ownership mismatch for user ${userId}`);
                     }
+                } else {
+                    logger.warn(`[CHAT] Skipped saving: User not authenticated for chat ${chatId}`);
+                    console.log(`⚠️ [PERSISTENCE] User not authenticated for chat ${chatId}`);
                 }
             } catch (dbError) {
-                logger.error("[CHAT] Failed to save assistant message", { error: dbError });
+                logger.error("[CHAT] Failed to save assistant message", {
+                    error: dbError instanceof Error ? dbError.message : String(dbError),
+                    chatId,
+                    userId
+                });
                 // We don't fail the request here since the stream was successful
             }
+        } else {
+            if (!chatId) logger.warn("[CHAT] Skipped saving: No chatId provided");
+            if (!fullContent) logger.warn("[CHAT] Skipped saving: No content generated");
         }
 
         logChatEvent("stream_complete", userId || null);
-        res.end();
+
+        // Only end the response if client is still connected
+        if (!clientDisconnected) {
+            res.end();
+        }
 
     } catch (error) {
         logger.error("[CHAT] Streaming error", { error });

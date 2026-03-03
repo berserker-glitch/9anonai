@@ -2,9 +2,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Header } from "@/components/landing/header";
 import { Footer } from "@/components/landing/footer";
-import { getPostBySlug, getAllPosts } from "@/lib/blog";
+import { getPostBySlug, getAllPosts, getRelatedPosts, BlogLanguage } from "@/lib/blog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { BlogPromotion } from "@/components/blog/blog-promotion";
+import { RelatedPosts } from "@/components/blog/related-posts";
+import { Breadcrumbs } from "@/components/blog/breadcrumbs";
+import { TableOfContents } from "@/components/blog/table-of-contents";
+import { ShareButtons } from "@/components/blog/share-buttons";
+import Image from "next/image";
 
 export async function generateStaticParams() {
     const posts = getAllPosts();
@@ -38,35 +44,66 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
     const { slug } = await params;
-    const post = getPostBySlug(slug);
+
+    const lang: BlogLanguage = "ar";
+    const post = getPostBySlug(slug, lang);
 
     if (!post) {
         notFound();
     }
 
+    const relatedPosts = getRelatedPosts(slug, lang);
+    const isRtl = lang === "ar";
+    const pageUrl = `https://9anonai.com/blog/${slug}`;
+
     return (
-        <div className="min-h-screen bg-background text-foreground font-sans" dir="rtl">
+        <div className={`min-h-screen bg-background text-foreground font-sans ${isRtl ? "font-arabic" : ""}`} dir={isRtl ? "rtl" : "ltr"}>
             <Header />
 
             <main className="pt-32 pb-20 px-6 sm:px-8 lg:px-12 max-w-4xl mx-auto">
-                <Link
-                    href="/blog"
-                    className="inline-flex items-center text-muted-foreground hover:text-primary transition-colors mb-8 text-sm"
-                >
-                    <svg className="w-4 h-4 ml-2 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                    </svg>
-                    العودة للمدونة
-                </Link>
+                {/* Breadcrumbs with JSON-LD for Google rich snippets */}
+                <Breadcrumbs
+                    items={[
+                        { label: "9anon AI", href: "/" },
+                        { label: isRtl ? "المدونة" : "Blog", href: "/blog" },
+                        { label: post.title },
+                    ]}
+                />
 
                 <article className="prose prose-lg dark:prose-invert prose-headings:font-display prose-headings:font-bold prose-h1:text-4xl prose-h2:text-2xl prose-a:text-primary prose-a:no-underline hover:prose-a:underline max-w-none">
                     <header className="mb-10 not-prose border-b border-border/40 pb-10">
+                        {/* Hero image with AI disclaimer */}
+                        {post.image && (
+                            <div className="mb-10">
+                                <div className="w-full relative h-[300px] sm:h-[450px] rounded-2xl overflow-hidden shadow-lg border border-border/40">
+                                    <Image
+                                        src={post.image}
+                                        alt={post.title}
+                                        fill
+                                        className="object-cover"
+                                        priority
+                                    />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-background/40 to-transparent pointer-events-none"></div>
+                                </div>
+                                {/* AI-generated image disclaimer */}
+                                <p className="mt-2 text-xs text-muted-foreground/60 flex items-center gap-1.5">
+                                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span>
+                                        {isRtl
+                                            ? "هذه الصورة تم إنشاؤها بواسطة الذكاء الاصطناعي لأغراض توضيحية. الأشخاص والمشاهد المصورة ليست حقيقية."
+                                            : "This image was AI-generated for illustrative purposes. Any people or scenes depicted are not real."}
+                                    </span>
+                                </p>
+                            </div>
+                        )}
                         <h1 className="text-4xl sm:text-5xl font-display font-bold mb-6 text-foreground leading-tight">
                             {post.title}
                         </h1>
-                        <div className="flex items-center gap-4 text-muted-foreground">
+                        <div className="flex items-center gap-4 text-muted-foreground flex-wrap">
                             <time dateTime={post.date}>
-                                {new Date(post.date).toLocaleDateString("ar-MA", {
+                                {new Date(post.date).toLocaleDateString(isRtl ? "ar-MA" : "en-US", {
                                     year: "numeric",
                                     month: "long",
                                     day: "numeric",
@@ -74,24 +111,44 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
                             </time>
                             <span className="w-1 h-1 rounded-full bg-border" />
                             <span>9anon AI Team</span>
+                            <span className="w-1 h-1 rounded-full bg-border" />
+                            {/* Reading time estimate */}
+                            <span className="inline-flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                {isRtl ? `${post.readingTime} دقائق قراءة` : `${post.readingTime} min read`}
+                            </span>
                         </div>
+
+                        {/* Social share buttons */}
+                        <ShareButtons url={pageUrl} title={post.title} lang={lang} />
                     </header>
+
+                    {/* Auto-generated Table of Contents */}
+                    <TableOfContents content={post.content} lang={lang} />
 
                     <div className="markdown-content">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {post.content}
                         </ReactMarkdown>
                     </div>
-                </article>
 
-                <div className="mt-16 pt-8 border-t border-border/40 flex justify-center">
-                    <Link
-                        href="/"
-                        className="btn-premium px-8 py-4 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl font-bold transition-all"
-                    >
-                        استشر 9anon AI الآن في هذا الموضوع
-                    </Link>
-                </div>
+                    {/* Bottom share buttons */}
+                    <div className="not-prose border-t border-border/40 mt-12 pt-6">
+                        <ShareButtons url={pageUrl} title={post.title} lang={lang} />
+                    </div>
+
+                    {/* Promotion banner */}
+                    <div className="not-prose mt-8">
+                        <BlogPromotion lang={lang} />
+                    </div>
+
+                    {/* Related Articles for internal linking */}
+                    <div className="not-prose">
+                        <RelatedPosts posts={relatedPosts} lang={lang} />
+                    </div>
+                </article>
             </main>
 
             <Footer />

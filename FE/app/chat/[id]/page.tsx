@@ -380,6 +380,7 @@ export default function ChatWithIdPage() {
                     message: content,
                     history: messages,
                     images: imageData,
+                    chatId: currentChatId, // Pass chatId for backend persistence
                 }),
             });
 
@@ -432,23 +433,7 @@ export default function ChatWithIdPage() {
                 }
             }
 
-            // Save assistant message
-            try {
-                await fetch(`${API_URL}/chats/${currentChatId}/messages`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({
-                        role: "assistant",
-                        content: fullContent,
-                        sources: JSON.stringify(finalSources)
-                    }),
-                });
-            } catch (e) {
-                console.error("Failed to save assistant message", e);
-            }
+            // Assistant message is now saved by the backend
         } catch (error) {
             console.error("Stream error:", error);
             setMessages(prev =>
@@ -488,11 +473,15 @@ export default function ChatWithIdPage() {
         try {
             const response = await fetch(`${API_URL}/chat`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`, // Auth required for backend persistence
+                },
                 body: JSON.stringify({
                     message: userContent,
                     history: messages.filter(m => m.id !== assistantMsgId),
                     images: [],
+                    chatId: activeChatId, // Pass chatId for backend persistence
                 }),
             });
 
@@ -611,6 +600,7 @@ export default function ChatWithIdPage() {
                     message: newContent.trim(),
                     history: messagesUpToEdit,
                     images: [],
+                    chatId: activeChatId, // Pass chatId for backend persistence
                 }),
             });
 
@@ -657,25 +647,7 @@ export default function ChatWithIdPage() {
                 }
             }
 
-            // Save messages to DB
-            if (activeChatId) {
-                try {
-                    await fetch(`${API_URL}/chats/${activeChatId}/messages`, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${token}`,
-                        },
-                        body: JSON.stringify({
-                            role: "assistant",
-                            content: fullContent,
-                            sources: JSON.stringify(finalSources),
-                        }),
-                    });
-                } catch (e) {
-                    console.error("Failed to save assistant message", e);
-                }
-            }
+            // Assistant message is now saved by the backend
         } catch (error) {
             console.error("Edit regenerate error:", error);
             setMessages(prev =>

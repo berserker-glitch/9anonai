@@ -9,14 +9,17 @@
  */
 
 import dotenv from "dotenv";
+// Load environment variables before other imports
+dotenv.config();
+
 import OpenAI from "openai";
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 import { getTable } from "../src/services/db";
 import { getEmbedding } from "../src/services/bi";
+import sharp from "sharp";
 
-// Load environment variables
-dotenv.config();
 
 // Configure OpenAI client with OpenRouter
 const client = new OpenAI({
@@ -29,131 +32,216 @@ const client = new OpenAI({
 });
 
 /**
+ * Dedicated client for Perplexity sonar-pro search.
+ * Uses the same OpenRouter base but needs its own instance so we can
+ * pass a different X-Title for tracking if needed.
+ */
+const perplexityClient = new OpenAI({
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey: process.env.OPENROUTER_API_KEY,
+    defaultHeaders: {
+        "HTTP-Referer": "https://9anonai.com",
+        "X-Title": "9anon - Trend Research",
+    },
+});
+
+/**
  * Blog topics to generate - covering different areas of Moroccan law
  * Each topic includes a slug, titles in 3 languages, and keywords for RAG search
  */
-const BLOG_TOPICS = [
-    {
-        slug: "understanding-moudawana-family-code",
-        titles: {
-            ar: "فهم مدونة الأسرة المغربية: الحقوق والواجبات",
-            en: "Understanding Morocco's Family Code (Moudawana): Rights and Responsibilities",
-            fr: "Comprendre le Code de la Famille Marocain (Moudawana) : Droits et Responsabilités"
-        },
-        descriptions: {
-            ar: "دليل شامل حول مدونة الأسرة المغربية وما تتضمنه من حقوق وواجبات للأسرة",
-            en: "A comprehensive guide to Morocco's Family Code and the rights and duties it entails",
-            fr: "Un guide complet sur le Code de la Famille marocain et les droits et devoirs qu'il implique"
-        },
-        searchQuery: "القانون الأحوال الشخصية المدونة الأسرة حقوق الأسرة الزواج الطلاق",
-        keywords: ["family law", "moudawana", "marriage", "divorce", "custody"]
-    },
-    {
-        slug: "morocco-labor-code-employee-rights",
-        titles: {
-            ar: "مدونة الشغل المغربية: حقوق العمال وواجبات المشغلين",
-            en: "Morocco's Labor Code: Employee Rights and Employer Obligations",
-            fr: "Le Code du Travail Marocain : Droits des Employés et Obligations des Employeurs"
-        },
-        descriptions: {
-            ar: "كل ما تحتاج معرفته عن حقوقك كعامل في المغرب وفق مدونة الشغل",
-            en: "Everything you need to know about your rights as an employee in Morocco",
-            fr: "Tout ce que vous devez savoir sur vos droits en tant qu'employé au Maroc"
-        },
-        searchQuery: "مدونة الشغل حقوق العمال الأجور العقود الطرد التعسفي",
-        keywords: ["labor law", "employment", "worker rights", "contracts", "dismissal"]
-    },
-    {
-        slug: "criminal-justice-penal-code-morocco",
-        titles: {
-            ar: "العدالة الجنائية في المغرب: شرح القانون الجنائي",
-            en: "Criminal Justice in Morocco: The Penal Code Explained",
-            fr: "La Justice Pénale au Maroc : Explication du Code Pénal"
-        },
-        descriptions: {
-            ar: "فهم القانون الجنائي المغربي والعقوبات المقررة للجرائم المختلفة",
-            en: "Understanding Moroccan criminal law and penalties for various offenses",
-            fr: "Comprendre le droit pénal marocain et les sanctions pour diverses infractions"
-        },
-        searchQuery: "القانون الجنائي المغربي العقوبات الجرائم المحكمة",
-        keywords: ["penal code", "criminal law", "offenses", "penalties", "courts"]
-    },
-    {
-        slug: "property-law-buying-selling-inheritance",
-        titles: {
-            ar: "قانون العقارات في المغرب: البيع والشراء والإرث",
-            en: "Property Law in Morocco: Buying, Selling, and Inheritance",
-            fr: "Le Droit Immobilier au Maroc : Achat, Vente et Héritage"
-        },
-        descriptions: {
-            ar: "دليلك الكامل للتعامل مع العقارات في المغرب من الشراء إلى الإرث",
-            en: "Your complete guide to dealing with real estate in Morocco",
-            fr: "Votre guide complet pour les transactions immobilières au Maroc"
-        },
-        searchQuery: "القانون العقاري الملكية البيع الشراء الإرث التحفيظ العقاري",
-        keywords: ["property law", "real estate", "inheritance", "registration", "ownership"]
-    },
-    {
-        slug: "commercial-law-starting-business-morocco",
-        titles: {
-            ar: "القانون التجاري في المغرب: تأسيس وإدارة الشركات",
-            en: "Commercial Law in Morocco: Starting and Running a Business",
-            fr: "Le Droit Commercial au Maroc : Création et Gestion d'Entreprise"
-        },
-        descriptions: {
-            ar: "كيفية تأسيس شركة في المغرب والإطار القانوني للأنشطة التجارية",
-            en: "How to start a company in Morocco and the legal framework for business",
-            fr: "Comment créer une entreprise au Maroc et le cadre juridique des affaires"
-        },
-        searchQuery: "القانون التجاري الشركات التأسيس السجل التجاري التجارة",
-        keywords: ["commercial law", "business", "company formation", "trade", "commerce"]
-    },
-    {
-        slug: "consumer-protection-rights-morocco",
-        titles: {
-            ar: "حماية المستهلك في المغرب: حقوقك وكيفية المطالبة بها",
-            en: "Consumer Protection Rights Under Moroccan Law",
-            fr: "La Protection du Consommateur au Maroc : Vos Droits"
-        },
-        descriptions: {
-            ar: "تعرف على حقوقك كمستهلك في المغرب وكيفية تقديم الشكاوى",
-            en: "Know your consumer rights in Morocco and how to file complaints",
-            fr: "Connaissez vos droits de consommateur au Maroc et comment porter plainte"
-        },
-        searchQuery: "حماية المستهلك الضمان الحقوق التجارة الشكاوى",
-        keywords: ["consumer rights", "protection", "warranties", "complaints", "commerce"]
-    },
-    {
-        slug: "digital-privacy-cybercrime-laws",
-        titles: {
-            ar: "الخصوصية الرقمية وقوانين الجرائم الإلكترونية في المغرب",
-            en: "Digital Privacy and Cybercrime Laws in Morocco",
-            fr: "Vie Privée Numérique et Lois sur la Cybercriminalité au Maroc"
-        },
-        descriptions: {
-            ar: "حماية بياناتك الشخصية والعقوبات المقررة للجرائم الإلكترونية",
-            en: "Protecting your personal data and penalties for cybercrime",
-            fr: "Protection de vos données personnelles et sanctions pour cybercriminalité"
-        },
-        searchQuery: "حماية المعطيات الشخصية الجرائم الإلكترونية الخصوصية الإنترنت",
-        keywords: ["data protection", "privacy", "cybercrime", "digital rights", "internet"]
-    },
-    {
-        slug: "administrative-law-citizen-rights",
-        titles: {
-            ar: "القانون الإداري في المغرب: حقوق المواطن أمام الإدارة",
-            en: "Administrative Law in Morocco: Citizen Rights Against Government",
-            fr: "Le Droit Administratif au Maroc : Droits du Citoyen face à l'Administration"
-        },
-        descriptions: {
-            ar: "كيفية الطعن في القرارات الإدارية وحماية حقوقك أمام الإدارة",
-            en: "How to challenge administrative decisions and protect your rights",
-            fr: "Comment contester les décisions administratives et protéger vos droits"
-        },
-        searchQuery: "القانون الإداري الطعون المحاكم الإدارية الحقوق الإدارة",
-        keywords: ["administrative law", "courts", "appeals", "government", "citizens"]
+/**
+ * Scan existing blogs to get a set of used slugs
+ */
+function getExistingSlugs(outputDir: string): Set<string> {
+    const slugs = new Set<string>();
+    if (!fs.existsSync(outputDir)) return slugs;
+
+    const files = fs.readdirSync(outputDir);
+    files.forEach(file => {
+        if (file.endsWith(".md")) {
+            // Remove lang suffixes (.en.md, .fr.md) and extension
+            const slug = file.replace(/\.(en|fr)\.md$/, "").replace(/\.md$/, "");
+            slugs.add(slug);
+        }
+    });
+    return slugs;
+}
+
+/**
+ * Step 1 of the topic pipeline: search for trending Moroccan law topics.
+ *
+ * Uses `perplexity/sonar-pro` via OpenRouter — this model performs live
+ * web searches and returns grounded results with real citations.
+ * The goal is to find what Moroccans are actually searching about their
+ * laws RIGHT NOW, so our blogs target real search demand.
+ *
+ * @param count - How many trend clusters to discover
+ * @returns A rich text summary of trending legal topics with citations
+ */
+async function searchTrendingTopics(existingList: string, count: number = 8): Promise<string> {
+    console.log(`   🔎 Querying Perplexity sonar-pro for trending Moroccan law searches...`);
+
+const searchPrompt = `You are a legal content researcher. Search the web comprehensively to find:
+
+1. What legal topics are Moroccans actively searching for right now?
+2. What new Moroccan laws, reforms, or legal changes have been announced or discussed recently?
+3. What legal problems or questions are most commonly asked in Morocco?
+
+IMPORTANT CONTEXT:
+We have already published articles on the following topics/slugs:
+${existingList ? existingList : "None yet."}
+
+DO NOT suggest or research these ALREADY PUBLISHED topics UNLESS there is a significant new development, law change, or new trend specifically related to them that hasn't been covered before.
+
+Search across:
+- Moroccan news sites (Hespress, Le360, Médio24, Yabiladi, 2M, TelQuel)
+- Legal forums and Q&A sites in Arabic and French
+- Moroccan government announcements (legislation, royal decrees)
+- Social media trending topics related to law in Morocco
+- Google Trends data for Morocco law-related searches
+
+Focus on these legal domains:
+- Family law (Moudawana reforms, divorce, custody, inheritance)
+- Labor law (Code du Travail reforms, wages, strikes, remote work)
+- Criminal law (penal code reforms, cybercrime, drug laws)
+- Real estate and property law
+- Business and commercial law (company formation, taxes)
+- Digital law (data protection, e-commerce, crypto)
+- Immigration and nationality
+- Consumer rights
+
+Return a detailed report of at least ${count} distinct trending topics, including:
+- The topic name and why it's trending
+- What specific questions people are asking
+- Any recent legislative changes driving the interest
+- Relevant search terms in Arabic and French
+
+Be specific and data-driven. Cite your sources.`;
+
+    try {
+        const response = await perplexityClient.chat.completions.create({
+            // perplexity/sonar-pro performs live web search via OpenRouter
+            model: "perplexity/sonar-pro",
+            messages: [
+                {
+                    role: "user",
+                    content: searchPrompt,
+                }
+            ],
+            // sonar-pro supports up to 8k output — we want detailed results
+            max_tokens: 4000,
+        });
+
+        const result = response.choices[0]?.message?.content || "";
+        console.log(`   ✅ Perplexity returned ${result.length} chars of trend data`);
+
+        // Log citations if available (Perplexity returns these in non-standard fields)
+        const rawResponse = response as any;
+        const citations: string[] = rawResponse?.citations || [];
+        if (citations.length > 0) {
+            console.log(`   📚 Citations: ${citations.slice(0, 5).join(", ")}${citations.length > 5 ? ` (+${citations.length - 5} more)` : ""}`);
+        }
+
+        return result;
+    } catch (error) {
+        console.error(`   ❌ Perplexity search failed:`, error);
+        // Fall back to empty string — generateNewTopics will handle it gracefully
+        return "";
     }
-];
+}
+
+/**
+ * Step 2 of the topic pipeline: synthesize search results into blog topics.
+ *
+ * Feeds the Perplexity trend report to Gemini which then picks the best
+ * angles for blog articles — ensuring every post we generate targets
+ * something people are actually searching for.
+ *
+ * @param existingSlugs - Slugs of already-published articles (to avoid duplication)
+ * @param count - Number of new topics to generate
+ * @returns Array of structured blog topic objects
+ */
+async function generateNewTopics(existingSlugs: Set<string>, count: number = 8): Promise<any[]> {
+    const existingList = Array.from(existingSlugs).join(", ");
+
+    // --- Phase 1: Discover what people are searching for via Perplexity ---
+    const trendReport = await searchTrendingTopics(existingList, count);
+
+    // --- Phase 2: Synthesize trend data into structured blog topics ---
+    const systemPrompt = `You are a content strategist for "9anon", Morocco's #1 AI legal platform.
+
+You have been given a live research report showing what Moroccans are currently searching for
+regarding their laws. Your job is to create ${count} NEW blog article topics based on this real
+search demand — topics that will rank on Google because people are actually looking for them.
+
+ALREADY PUBLISHED (DO NOT REPEAT THESE):
+${existingList}
+
+${trendReport ? `LIVE TREND RESEARCH FROM THE WEB:
+---
+${trendReport}
+---
+
+Base your topics on the real search trends above.` : ""}
+
+RULES:
+- Each topic must address a real legal question Moroccans are searching for
+- Topics should be specific and actionable, not vague
+- Prefer topics where there is a recent law change or legal development driving interest
+- Mix individual-focused topics (citizen rights, family law) with business topics
+- The slug must be in English kebab-case and unique
+
+Return ONLY a valid JSON array with exactly this structure:
+[
+  {
+    "slug": "kebab-case-slug-in-english",
+    "titles": {
+      "ar": "Arabic Title",
+      "en": "English Title",
+      "fr": "French Title"
+    },
+    "descriptions": {
+      "ar": "Arabic Description (2 sentences)",
+      "en": "English Description (2 sentences)",
+      "fr": "French Description (2 sentences)"
+    },
+    "searchQuery": "Arabic search query for legal database lookup",
+    "keywords": ["keyword1", "keyword2", "keyword3"],
+    "trendReason": "1-sentence explanation of why this topic is trending"
+  }
+]`;
+
+    const response = await client.chat.completions.create({
+        model: "google/gemini-2.0-flash-001",
+        messages: [{ role: "user", content: systemPrompt }],
+        max_tokens: 8000,
+        response_format: { type: "json_object" }
+    });
+
+    const content = response.choices[0]?.message?.content || "[]";
+    try {
+        let jsonStr = content
+            .replace(/^```(json)?\s*/, "")
+            .replace(/\s*```$/, "")
+            .trim()
+            // Fix trailing commas before closing braces/brackets
+            .replace(/,\s*([}\]])/g, '$1');
+
+        const parsed = JSON.parse(jsonStr);
+        const topics = Array.isArray(parsed) ? parsed : (parsed.topics || []);
+
+        // Log the trend reasons so the operator knows why each topic was chosen
+        topics.forEach((t: any, i: number) => {
+            console.log(`      ${i + 1}. ${t.slug} — ${t.trendReason || "(no reason given)"}`);
+        });
+
+        return topics;
+    } catch (e) {
+        console.error("Failed to parse generated topics:", e);
+        console.error("Raw content:", content);
+        return [];
+    }
+}
 
 /**
  * Language configuration for article generation
@@ -173,6 +261,7 @@ interface GeneratedBlog {
     title: string;
     description: string;
     content: string;
+    image: string;
     sources: string[];
     generatedAt: Date;
 }
@@ -232,6 +321,14 @@ ${doc.text}
     }).join("\n\n");
 }
 
+interface BlogTopic {
+    slug: string;
+    titles: { ar: string; en: string; fr: string };
+    descriptions: { ar: string; en: string; fr: string };
+    searchQuery: string;
+    keywords: string[];
+}
+
 /**
  * Generate a single blog article in a specific language
  * 
@@ -240,14 +337,16 @@ ${doc.text}
  * @param context - RAG context (legal references)
  * @param topicIndex - Topic number (1-8)
  * @param langIndex - Language index (0-2)
+ * @param imageUrl - URL of the generated image
  * @returns Generated blog object
  */
 async function generateBlogInLanguage(
-    topic: typeof BLOG_TOPICS[0],
+    topic: BlogTopic,
     language: typeof LANGUAGES[0],
     context: string,
     topicIndex: number,
-    langIndex: number
+    langIndex: number,
+    imageUrl: string
 ): Promise<GeneratedBlog> {
     console.log(`      🌐 [${language.name}] Generating...`);
 
@@ -330,6 +429,7 @@ Use your knowledge of Moroccan legal frameworks and cite specific laws where app
         title: topic.titles[language.code as keyof typeof topic.titles],
         description: topic.descriptions[language.code as keyof typeof topic.descriptions],
         content: content,
+        image: imageUrl,
         sources: [],
         generatedAt: new Date()
     };
@@ -351,6 +451,7 @@ function saveBlog(blog: GeneratedBlog, language: typeof LANGUAGES[0], outputDir:
 title: "${blog.title}"
 date: "${blog.generatedAt.toISOString().split("T")[0]}"
 description: "${blog.description}"
+image: "${blog.image}"
 ---
 
 `;
@@ -368,7 +469,8 @@ description: "${blog.description}"
 async function main(): Promise<void> {
     console.log("╔══════════════════════════════════════════════════════════════╗");
     console.log("║     🇲🇦 MOROCCAN LAW MULTILINGUAL BLOG GENERATOR              ║");
-    console.log("║     Generating 8 articles × 3 languages = 24 blog posts      ║");
+    console.log("║     Step 1: Perplexity sonar-pro searches trending topics     ║");
+    console.log("║     Step 2: Gemini synthesizes → 8 topics × 3 languages      ║");
     console.log("╚══════════════════════════════════════════════════════════════╝\n");
 
     // Verify API key is set
@@ -392,9 +494,26 @@ async function main(): Promise<void> {
     let failCount = 0;
 
     // Generate all 8 articles in 3 languages
-    for (let topicIdx = 0; topicIdx < BLOG_TOPICS.length; topicIdx++) {
-        const topic = BLOG_TOPICS[topicIdx];
-        console.log(`\n📝 [${topicIdx + 1}/8] Topic: "${topic.titles.en}"`);
+    // Step 0: Get existing slugs and generate NEW topics
+    console.log(`   🔍 Scanning existing blogs...`);
+    const existingSlugs = getExistingSlugs(outputDir);
+    console.log(`   ✅ Found ${existingSlugs.size} existing articles/topics`);
+
+    console.log(`   🧠 Generating 8 NEW unique topics...`);
+    const newTopics = await generateNewTopics(existingSlugs, 8);
+
+    if (newTopics.length === 0) {
+        console.log("   ⚠️ No new topics generated. Exiting.");
+        return;
+    }
+
+    console.log(`   ✅ Generated ${newTopics.length} new topics:\n`);
+    newTopics.forEach((t, i) => console.log(`      ${i + 1}. ${t.slug}`));
+
+    // Generate articles for the new topics
+    for (let topicIdx = 0; topicIdx < newTopics.length; topicIdx++) {
+        const topic = newTopics[topicIdx];
+        console.log(`\n📝 [${topicIdx + 1}/${newTopics.length}] Topic: "${topic.titles.en}"`);
 
         // Step 1: Search for relevant legal context using RAG (once per topic)
         console.log(`   🔍 Searching legal database...`);
@@ -404,15 +523,238 @@ async function main(): Promise<void> {
         // Build context from RAG results
         const context = buildContext(sources);
 
+        // Step 1.5: Generate image using Gemini Pro Image via raw OpenRouter API
+        // We use fetch directly because the OpenAI SDK strips multimodal image parts
+        console.log(`   🎨 Generating image for topic...`);
+        let imageUrl = "";
+        try {
+            /**
+             * Generate a professional blog illustration using Gemini's image model.
+             * We call OpenRouter directly via fetch because the OpenAI SDK's
+             * message.content only captures text — Gemini returns images as
+             * multimodal parts (inline_data) which the SDK discards.
+             */
+            const imagePrompt = [
+                // --- Core directive: scene replication ---
+                `Create a single, hyper-realistic editorial photograph that tells the STORY of this blog article at a glance.`,
+                `Blog title: "${topic.titles.en}".`,
+                `Blog keywords: ${topic.keywords.join(", ")}.`,
+
+                // --- Scene composition & narrative ---
+                `SCENE DIRECTION: Reconstruct the exact real-world moment the article describes.`,
+                `Examples of what this means:`,
+                `• A divorce article → a woman sitting across from a lawyer at a desk, signing papers, her expression is conflicted; soft window light rakes across the table.`,
+                `• A labor rights article → a factory floor or open-plan office mid-dispute; a supervisor and a worker face each other, body language tense, coworkers watching in the background.`,
+                `• A real estate article → a young couple standing in the doorway of an empty apartment, the agent gesturing inside; golden-hour light floods the room.`,
+                `• A criminal law article → a dimly lit courtroom corridor; a defendant and their lawyer whispering urgently outside heavy wooden doors.`,
+                `Choose the most visually dramatic and emotionally resonant moment from the topic. Capture mid-action, not posed.`,
+
+                // --- Photographic technique ---
+                `CAMERA: Shot on a full-frame 35mm sensor. Focal length 35-85mm depending on scene intimacy.`,
+                `Use shallow depth of field (f/1.8–f/2.8) to isolate the subject from the environment. Background should be softly bokeh'd but still contextually readable.`,
+                `LIGHTING: Motivated natural light — window light, golden hour, or diffused overcast. Allow dramatic shadows and highlights. Avoid flat, even studio lighting.`,
+                `COLOR GRADE: Muted, desaturated warm tones — think Kodak Portra 400 film stock. Slight grain is acceptable. Blacks should be lifted slightly (cinematic log look).`,
+                `COMPOSITION: Use the rule of thirds or leading lines. Place the emotional anchor (a face, hands on a document, a gesture) at a power point. Include environmental storytelling in the frame edges.`,
+
+                // --- Moroccan identity (subtle) ---
+                `CASTING: All people in the scene must have North African / Moroccan facial features, skin tones, and hair textures. This is the ONLY culturally specific element. Everything else — clothing, setting, props — should be modern and universally relatable. No traditional garments, no ornate architecture, no flags, no calligraphy.`,
+
+                // --- Hard constraints ---
+                `ABSOLUTE RESTRICTIONS: Zero text, zero words, zero watermarks, zero logos, zero UI overlays, zero borders. The image must be a clean photograph with nothing overlaid.`,
+            ].join("\n");
+
+            const rawResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                    "HTTP-Referer": "https://github.com/moroccan-legal-ai",
+                    "X-Title": "9anon - Blog Image Generator",
+                },
+                body: JSON.stringify({
+                    model: "google/gemini-3-pro-image-preview",
+                    messages: [
+                        { role: "user", content: imagePrompt }
+                    ],
+                    modalities: ["image", "text"],
+                }),
+            });
+
+            const responseJson = await rawResponse.json() as any;
+
+            // Debug: log the response structure to understand the format
+            const messageObj = responseJson?.choices?.[0]?.message;
+            console.log(`   📦 Response keys: ${JSON.stringify(Object.keys(responseJson?.choices?.[0] || {}))}`);
+            console.log(`   📦 Message keys: ${JSON.stringify(Object.keys(messageObj || {}))}`);
+
+            let imageBuffer: Buffer | null = null;
+
+            // OpenRouter returns Gemini images in message.images array
+            // Each image object has: { image_url: { url: "data:image/png;base64,..." } }
+            if (messageObj?.images && Array.isArray(messageObj.images) && messageObj.images.length > 0) {
+                const imgObj = messageObj.images[0];
+                const imageDataUrl = imgObj?.image_url?.url;
+
+                if (imageDataUrl) {
+                    console.log(`   📸 Found image data URL (length: ${imageDataUrl.length})`);
+                    // Extract base64 from data URI
+                    const dataMatch = imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)/s);
+                    if (dataMatch) {
+                        imageBuffer = Buffer.from(dataMatch[1], "base64");
+                    } else if (imageDataUrl.startsWith("http")) {
+                        // It's a regular URL, download it
+                        console.log(`   🔗 Downloading image from URL...`);
+                        const dlRes = await fetch(imageDataUrl);
+                        imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+                    }
+                } else {
+                    console.warn(`   ⚠️ images[0] structure:`, JSON.stringify(imgObj).slice(0, 300));
+                }
+            }
+
+            // Format 1: OpenRouter multimodal content array
+            // content: [{type: "text", text: "..."}, {type: "image_url", image_url: {url: "data:image/png;base64,..."}}]
+            if (!imageBuffer && Array.isArray(messageObj?.content)) {
+                for (const part of messageObj.content) {
+                    // Check for image_url part with base64 data URI
+                    if (part.type === "image_url" && part.image_url?.url) {
+                        const dataMatch = part.image_url.url.match(/^data:image\/[^;]+;base64,(.+)/s);
+                        if (dataMatch) {
+                            console.log(`   📸 Found base64 in content array (image_url part)`);
+                            imageBuffer = Buffer.from(dataMatch[1], "base64");
+                            break;
+                        }
+                        // It's a regular URL, download it
+                        console.log(`   🔗 Found URL in content array: ${part.image_url.url.slice(0, 80)}...`);
+                        const dlRes = await fetch(part.image_url.url);
+                        imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+                        break;
+                    }
+                    // Check for inline_data (Gemini native format sometimes passed through)
+                    if (part.inline_data?.data) {
+                        console.log(`   📸 Found inline_data part`);
+                        imageBuffer = Buffer.from(part.inline_data.data, "base64");
+                        break;
+                    }
+                }
+            }
+
+            // Format 2: content is a plain string (text with possible base64 or URL)
+            if (!imageBuffer && typeof messageObj?.content === "string" && messageObj.content.length > 0) {
+                const textContent = messageObj.content;
+                console.log(`   📦 Text content length: ${textContent.length}, preview: ${textContent.slice(0, 100)}...`);
+
+                // Check for data URI in the text
+                const dataUriMatch = textContent.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=\s]+)/);
+                if (dataUriMatch) {
+                    console.log(`   📸 Found data URI in text content`);
+                    imageBuffer = Buffer.from(dataUriMatch[1].replace(/\s/g, ""), "base64");
+                }
+
+                // Check for raw base64 (long string with no spaces)
+                if (!imageBuffer && textContent.length > 500 && !textContent.includes(" ")) {
+                    console.log(`   📸 Text looks like raw base64`);
+                    imageBuffer = Buffer.from(textContent.trim(), "base64");
+                }
+
+                // Check for URL
+                if (!imageBuffer) {
+                    const mdMatch = textContent.match(/!\[.*?\]\(([^)]+)\)/);
+                    const urlMatch = textContent.match(/https?:\/\/[^\s)]+/);
+                    const url = mdMatch ? mdMatch[1] : urlMatch ? urlMatch[0] : "";
+                    if (url) {
+                        console.log(`   🔗 Found URL in text: ${url.slice(0, 80)}...`);
+                        const dlRes = await fetch(url);
+                        imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+                    }
+                }
+            }
+
+            if (imageBuffer && imageBuffer.length > 100) {
+                // Ensure output directory exists
+                const imagesDir = path.resolve(__dirname, "..", "..", "FE", "public", "blog-images");
+                if (!fs.existsSync(imagesDir)) {
+                    fs.mkdirSync(imagesDir, { recursive: true });
+                }
+
+                const finalImagePath = path.join(imagesDir, `${topic.slug}.png`);
+                const logoPath = path.resolve(__dirname, "..", "..", "FE", "public", "Layer 3.png");
+
+                /**
+                 * Composite the 9anon logo onto the bottom-left corner.
+                 * Logo is resized to 6% of image width, with 40% opacity and 20px padding.
+                 */
+                const mainImage = sharp(imageBuffer);
+                const metadata = await mainImage.metadata();
+                const imgWidth = metadata.width || 800;
+                const imgHeight = metadata.height || 600;
+                const logoSize = Math.round(imgWidth * 0.06); // 6% of image width — small watermark
+                const padding = 20; // px padding from bottom-left edges
+
+                // Resize logo and lower opacity to 40%
+                const resizedLogo = await sharp(logoPath)
+                    .resize(logoSize)
+                    .ensureAlpha()
+                    .linear(0.4, 0) // Scale all channels including alpha by 0.4 for 40% opacity
+                    .toBuffer();
+
+                // Get resized logo dimensions for precise placement
+                const logoMeta = await sharp(resizedLogo).metadata();
+                const logoHeight = logoMeta.height || logoSize;
+
+                await sharp(imageBuffer)
+                    .composite([{
+                        input: resizedLogo,
+                        left: padding,
+                        top: imgHeight - logoHeight - padding,
+                    }])
+                    .png()
+                    .toFile(finalImagePath);
+
+                imageUrl = `/blog-images/${topic.slug}.png`;
+                console.log(`   ✅ Image saved to ${imageUrl} (${(imageBuffer.length / 1024).toFixed(1)} KB)`);
+            } else {
+                console.warn(`   ⚠️ Could not extract a valid image from the response.`);
+                // Log the full structure for debugging
+                console.warn(`   📝 Full response structure:`, JSON.stringify(responseJson?.choices?.[0]?.message || {}).slice(0, 500));
+            }
+        } catch (imageErr) {
+            console.error(`   ❌ Failed to generate/composite image:`, imageErr);
+        }
+
         // Step 2: Generate in all 3 languages
         for (let langIdx = 0; langIdx < LANGUAGES.length; langIdx++) {
             const language = LANGUAGES[langIdx];
 
             try {
-                const blog = await generateBlogInLanguage(topic, language, context, topicIdx + 1, langIdx);
+                const blog = await generateBlogInLanguage(topic, language, context, topicIdx + 1, langIdx, imageUrl);
                 blog.sources = sources.map(s => s.document_name || s.source_file || "Unknown");
                 saveBlog(blog, language, outputDir);
                 successCount++;
+
+                /**
+                 * Auto-commit the newly generated blog to Git.
+                 * Executes git add and commit within the FE directory.
+                 */
+                try {
+                    const feDir = path.resolve(__dirname, "..", "..", "FE");
+                    const filename = `${blog.slug}${language.suffix}.md`;
+                    // Using forward slashes for relative path within FE directory
+                    const relPath = `content/blogs/${filename}`;
+
+                    // Add the specific newly created blog file
+                    execSync(`git add "${relPath}"`, { cwd: feDir });
+
+                    // Map language code to the format required by the user (eng, fr, ar)
+                    const langStr = language.code === 'en' ? 'eng' : (language.code === 'fr' ? 'fr' : 'ar');
+                    const safeSlug = blog.slug.replace(/"/g, '\\"');
+
+                    // Commit with the required message format
+                    execSync(`git commit -m "feat(blog): added blog ${safeSlug} in ${langStr}"`, { cwd: feDir, stdio: 'pipe' });
+                    console.log(`      🚀 Git committed: ${filename}`);
+                } catch (gitError) {
+                    console.warn(`      ⚠️ Git commit skipped or failed for ${blog.slug} (might be unchanged)`);
+                }
 
                 // Add a small delay between API calls to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 1500));
@@ -423,7 +765,7 @@ async function main(): Promise<void> {
         }
 
         // Delay between topics
-        if (topicIdx < BLOG_TOPICS.length - 1) {
+        if (topicIdx < newTopics.length - 1) {
             console.log(`   ⏳ Waiting 3 seconds before next topic...`);
             await new Promise(resolve => setTimeout(resolve, 3000));
         }
@@ -442,20 +784,18 @@ async function main(): Promise<void> {
     console.log(`⏱️  Total time: ${duration} minutes`);
     console.log(`📁 Blogs saved to: ${outputDir}`);
 
-    // List the newly generated files
-    console.log("\n📄 Generated blog files:");
-    BLOG_TOPICS.forEach(topic => {
-        console.log(`   📂 ${topic.slug}`);
-        LANGUAGES.forEach(lang => {
-            const filename = `${topic.slug}${lang.suffix}.md`;
-            const filepath = path.join(outputDir, filename);
-            if (fs.existsSync(filepath)) {
-                console.log(`      ✅ ${filename}`);
-            } else {
-                console.log(`      ❌ ${filename} (missing)`);
-            }
-        });
-    });
+    /**
+     * Final Git operation: push the committed generated blogs to the repository.
+     * Operates from the FE directory contexts.
+     */
+    try {
+        console.log(`\n☁️  Pushing to git repository...`);
+        const feDir = path.resolve(__dirname, "..", "..", "FE");
+        execSync(`git push`, { cwd: feDir, stdio: 'inherit' });
+        console.log(`   ✅ Successfully pushed all generated blogs.`);
+    } catch (pushError) {
+        console.error(`   ❌ Failed to push to git repository:`, pushError);
+    }
 }
 
 // Execute the main function
