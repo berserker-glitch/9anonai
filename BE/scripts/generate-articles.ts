@@ -81,7 +81,7 @@ function getExistingSlugs(outputDir: string): Set<string> {
 async function searchTrendingTopics(existingList: string, count: number = 8): Promise<string> {
     console.log(`   🔎 Querying Perplexity sonar-pro for trending Moroccan law searches...`);
 
-const searchPrompt = `You are a legal content researcher. Search the web comprehensively to find:
+    const searchPrompt = `You are a legal content researcher. Search the web comprehensively to find:
 
 1. What legal topics are Moroccans actively searching for right now?
 2. What new Moroccan laws, reforms, or legal changes have been announced or discussed recently?
@@ -191,6 +191,26 @@ RULES:
 - Mix individual-focused topics (citizen rights, family law) with business topics
 - The slug must be in English kebab-case and unique
 
+TITLE RULES (for all 3 languages):
+- Start with "How to", a number, or the specific law number (e.g. "Law 10-95")
+- Include the current year (2026) for freshness signals
+- Add the word "Morocco" or "Moroccan" for geo-targeting
+- Max 60 characters — Google truncates longer titles
+- Avoid academic phrasing like "An Analysis of" or "Comprehensive Guide to"
+- Use power words: "Full Text", "Step-by-Step", "Explained", "Your Rights"
+- Use "vs", numbers, or parenthetical years for CTR boost
+
+DESCRIPTION RULES (for all 3 languages):
+- 140-155 characters — fills the full Google snippet on desktop
+- Formula: [Problem/Question] + [What you'll learn] + [Trust signal]
+- Include 1-2 specific details (law numbers, procedures, costs)
+- End with an action or benefit, not a trailing sentence
+- Never start with "A comprehensive guide" — that's a CTR killer
+
+CATEGORY RULES:
+- Assign exactly ONE category from this list: "family-law", "labor-law", "criminal-law", "real-estate", "business-law", "digital-law", "immigration", "consumer-rights", "administrative-law", "tax-law", "traffic-law"
+- Choose the most specific matching category
+
 Return ONLY a valid JSON array with exactly this structure:
 [
   {
@@ -207,7 +227,8 @@ Return ONLY a valid JSON array with exactly this structure:
     },
     "searchQuery": "Arabic search query for legal database lookup",
     "keywords": ["keyword1", "keyword2", "keyword3"],
-    "trendReason": "1-sentence explanation of why this topic is trending"
+    "trendReason": "1-sentence explanation of why this topic is trending",
+    "category": "one-of-the-categories-above"
   }
 ]`;
 
@@ -264,6 +285,12 @@ interface GeneratedBlog {
     image: string;
     sources: string[];
     generatedAt: Date;
+    /** SEO keywords for meta tags */
+    keywords?: string[];
+    /** Legal category for filtering */
+    category?: string;
+    /** Key takeaways for rich snippets */
+    keyTakeaways?: string[];
 }
 
 /**
@@ -321,12 +348,195 @@ ${doc.text}
     }).join("\n\n");
 }
 
+/**
+ * Step 3 of the topic pipeline: SERP competitor analysis.
+ *
+ * Uses Perplexity to search for the exact topic on Google Morocco,
+ * identify top-ranking articles and their content gaps, and extract
+ * "People Also Ask" questions. This intelligence is fed into the
+ * article generation prompt so our content outcompetes existing results.
+ *
+ * @param topic - The blog topic to research
+ * @returns A structured brief with competitor gaps and PAA questions
+ */
+async function analyzeSERPCompetitors(topic: BlogTopic): Promise<string> {
+    console.log(`   🔬 Analyzing SERP competitors for: "${topic.titles.en}"...`);
+
+    const serpPrompt = `Search Google for the following query and analyze the top results:
+
+Query: "${topic.titles.en}" Morocco law
+
+Also search in French: "${topic.titles.fr}"
+And in Arabic: "${topic.titles.ar}"
+
+For each of the top 5 ranking results, analyze:
+1. What specific legal articles/laws do they cite?
+2. What sections/topics do they cover?
+3. What is their approximate word count?
+4. What do they MISS or cover poorly?
+
+Also extract:
+- All "People Also Ask" questions related to this topic
+- Related search suggestions at the bottom of the SERP
+- Any featured snippet content
+
+Return a structured brief with:
+COMPETITOR GAPS: What the top results miss or cover poorly
+PEOPLE ALSO ASK: List of PAA questions found
+MUST-COVER TOPICS: Sections we MUST include to outrank competitors
+RECOMMENDED WORD COUNT: Based on competitor analysis`;
+
+    try {
+        const response = await perplexityClient.chat.completions.create({
+            model: "perplexity/sonar-pro",
+            messages: [{ role: "user", content: serpPrompt }],
+            max_tokens: 3000,
+        });
+
+        const result = response.choices[0]?.message?.content || "";
+        console.log(`   ✅ SERP analysis complete (${result.length} chars)`);
+        return result;
+    } catch (error) {
+        console.error(`   ❌ SERP analysis failed:`, error);
+        // Non-fatal: article generation continues without SERP data
+        return "";
+    }
+}
+
+/**
+ * Build a "link bank" of existing articles for internal linking.
+ *
+ * Reads all existing blog markdown files in the output directory,
+ * extracts their slug, title, and keywords from frontmatter, and
+ * returns a formatted string the LLM can use to naturally embed
+ * internal links in the generated article.
+ *
+ * @param outputDir - Directory where blog markdown files live
+ * @param currentSlug - Slug of the article being generated (excluded)
+ * @param lang - Language code to read the right file variant
+ * @returns A formatted list of existing articles for LLM context
+ */
+function buildLinkBank(outputDir: string, currentSlug: string, lang: string): string {
+    try {
+        const files = fs.readdirSync(outputDir);
+
+        // Filter files for the target language
+        const targetFiles = files.filter(f => {
+            if (lang === "ar") {
+                return f.endsWith(".md") && !f.endsWith(".en.md") && !f.endsWith(".fr.md");
+            }
+            return f.endsWith(`.${lang}.md`);
+        });
+
+        const linkEntries: string[] = [];
+
+        for (const file of targetFiles) {
+            const slug = file.replace(/\.(?:[a-z]{2}\.)?md$/, "");
+            // Skip the article we're currently generating
+            if (slug === currentSlug) continue;
+
+            const filepath = path.join(outputDir, file);
+            const content = fs.readFileSync(filepath, "utf-8");
+
+            // Extract title from frontmatter
+            const titleMatch = content.match(/^title:\s*"(.+)"/m);
+            const title = titleMatch ? titleMatch[1] : slug;
+
+            // Extract keywords if available
+            const kwMatch = content.match(/^keywords:\s*\[(.+)\]/m);
+            const keywords = kwMatch ? kwMatch[1] : "";
+
+            linkEntries.push(`- [${title}](/blog/${slug}) ${keywords ? `(keywords: ${keywords})` : ""}`);
+        }
+
+        if (linkEntries.length === 0) return "";
+
+        return `\nINTERNAL LINK BANK — Use these to embed 2-3 contextually relevant links:\n${linkEntries.join("\n")}`;
+    } catch {
+        return "";
+    }
+}
+
+/**
+ * Post-generation quality validation gate.
+ *
+ * Checks that the generated article meets minimum quality thresholds
+ * before it's saved. Returns a list of failures; an empty array means
+ * the article passed all checks.
+ *
+ * @param content - The generated markdown article content
+ * @param lang - Language code of the article
+ * @returns Array of failure descriptions (empty = passed)
+ */
+function validateArticleQuality(content: string, lang: string): string[] {
+    const failures: string[] = [];
+
+    /**
+     * 1. Content length check — uses character count for Arabic (Arabic words
+     * average 5-7 chars vs English 4-5, so word splitting underreports).
+     * For EN/FR, use word count. Thresholds are tuned to what the LLM
+     * actually produces at max_tokens=8000.
+     */
+    if (lang === "ar") {
+        // Arabic: check character count — 5000 chars ≈ 1000 Arabic words ≈ 1500 English words
+        const charCount = content.trim().length;
+        if (charCount < 5000) {
+            failures.push(`Content too short: ${charCount} chars (minimum 5000 for Arabic)`);
+        }
+    } else {
+        const wordCount = content.trim().split(/\s+/).length;
+        if (wordCount < 1000) {
+            failures.push(`Word count too low: ${wordCount} (minimum 1000)`);
+        }
+    }
+
+    // 2. Heading count check — at least 4 ## headings for structure
+    const h2Count = (content.match(/^##\s+/gm) || []).length;
+    if (h2Count < 4) {
+        failures.push(`Too few H2 headings: ${h2Count} (minimum 4)`);
+    }
+
+    // 3. Law reference check — should cite specific articles
+    const lawRefPatterns = [
+        /Article\s+\d+/gi,         // English: "Article 15"
+        /المادة\s+\d+/g,           // Arabic: "المادة 15"
+        /article\s+\d+/gi,         // French: "article 15"
+        /Law\s+(?:No\.?\s*)?\d+/gi, // "Law No. 70.03"
+        /القانون\s+رقم\s+\d+/g,   // Arabic law references
+        /Loi\s+(?:n°?\s*)?\d+/gi,  // French: "Loi n° 70.03"
+    ];
+    const lawRefs = lawRefPatterns.reduce((count, pattern) => {
+        return count + (content.match(pattern) || []).length;
+    }, 0);
+    if (lawRefs < 2) {
+        failures.push(`Too few law references: ${lawRefs} (minimum 2)`);
+    }
+
+    // 4. FAQ check — should have the FAQ_JSON marker
+    if (!content.includes("<!-- FAQ_JSON -->")) {
+        failures.push("Missing FAQ_JSON block");
+    }
+
+    // 5. Internal link check — should have at least 1 internal link
+    const internalLinks = (content.match(/\]\(\/blog\//g) || []).length;
+    if (internalLinks < 1) {
+        // This is a warning, not a hard failure
+        console.log(`      ⚠️  No internal links found (recommended: 2-3)`);
+    }
+
+    return failures;
+}
+
 interface BlogTopic {
     slug: string;
     titles: { ar: string; en: string; fr: string };
     descriptions: { ar: string; en: string; fr: string };
     searchQuery: string;
     keywords: string[];
+    /** Assigned legal category for frontmatter grouping */
+    category?: string;
+    /** Why this topic was chosen (from trend analysis) */
+    trendReason?: string;
 }
 
 /**
@@ -338,6 +548,8 @@ interface BlogTopic {
  * @param topicIndex - Topic number (1-8)
  * @param langIndex - Language index (0-2)
  * @param imageUrl - URL of the generated image
+ * @param serpBrief - SERP competitor analysis brief (from analyzeSERPCompetitors)
+ * @param linkBank - Internal link bank string (from buildLinkBank)
  * @returns Generated blog object
  */
 async function generateBlogInLanguage(
@@ -346,7 +558,9 @@ async function generateBlogInLanguage(
     context: string,
     topicIndex: number,
     langIndex: number,
-    imageUrl: string
+    imageUrl: string,
+    serpBrief: string = "",
+    linkBank: string = ""
 ): Promise<GeneratedBlog> {
     console.log(`      🌐 [${language.name}] Generating...`);
 
@@ -363,28 +577,71 @@ N'utilisez jamais d'emojis.
 Utilisez une grammaire et une ponctuation françaises correctes.`
     };
 
+    // Build the SERP intelligence section if available
+    const serpSection = serpBrief ? `
+SERP COMPETITOR INTELLIGENCE (use this to write a BETTER article than competitors):
+---
+${serpBrief}
+---
+IMPORTANT: Your article MUST cover everything competitors cover AND fill the gaps they miss.
+Answer ALL "People Also Ask" questions within the article body naturally.` : "";
+
+    // Build the internal linking section if available
+    const linkingSection = linkBank ? `
+INTERNAL LINKING:
+Here are related published articles you MUST link to.
+${linkBank}
+
+RULES: Naturally embed 2-3 of these internal links using markdown format [anchor text](/blog/slug).
+Only link where contextually relevant.
+CRITICAL: ABSOLUTELY NEVER link to a blog slug that is not in the list above. DO NOT invent or hallucinate URLs.` : "";
+
     const systemPrompt = `You are an expert legal writer specializing in Moroccan law.
-Your task is to write a professional, educational blog article.
+Your task is to write a professional, educational, SEO-optimized blog article that will RANK #1 on Google.
 
 ${languageInstructions[language.code]}
 
 WRITING GUIDELINES:
 1. Write in clear, accessible language that non-lawyers can understand
-2. Include specific references to Moroccan laws, codes, and articles when available in the context
-3. Structure the article with clear sections using markdown headings (## for main sections)
-4. Include practical examples and real-world applications
-5. Mention relevant Moroccan legal institutions and procedures
-6. Cite specific article numbers and law names when provided in the context
-7. Target length: 800-1200 words (medium-length blog post)
-8. Use proper markdown formatting throughout
+2. Include specific references to Moroccan laws, codes, and articles — cite AT LEAST 5 specific article numbers
+3. Structure the article with clear sections using markdown headings (## for main sections, ### for subsections)
+4. Include practical examples, real-world scenarios, and step-by-step procedures
+5. Mention relevant Moroccan legal institutions, courts, and administrative procedures
+6. Cite specific article numbers and law names from the provided context AND your own knowledge
+7. Target length: 2000-3000 words — this is NON-NEGOTIABLE, write AT LEAST 2000 words
+8. Use proper markdown formatting throughout — bold key terms, use bullet lists for procedures
 9. NEVER use emojis
+10. Include the current year (2026) naturally for freshness signals
+11. Use the E-E-A-T framework: demonstrate Experience, Expertise, Authoritativeness, Trustworthiness
 
-ARTICLE STRUCTURE:
-- Brief introduction (2-3 paragraphs)
-- 3-4 main sections with practical information
-- Conclusion with key takeaways
+CRITICAL LENGTH REQUIREMENT:
+- You MUST write at least 2000 words. Articles under 1500 words are UNACCEPTABLE.
+- Each of the 6 mandatory sections below has a MINIMUM word count. Follow it.
+- If you feel you are running short, add more examples, more case law, more practical detail.
+- NEVER conclude early. Always pad with real, useful legal content if you are under the target.
 
-At the end, add this exact section:
+ARTICLE STRUCTURE (MANDATORY — follow this exactly, meet each section's word minimum):
+1. Hook Introduction (250-400 words minimum): Start with a compelling real-world scenario or question that the reader identifies with. State what they will learn.
+2. Legal Foundation (350-500 words minimum): Cite the primary laws, codes, and articles that govern this topic.
+3. Practical Guide (400-600 words minimum): Step-by-step procedures, required documents, timelines, costs.
+4. Key Provisions Explained (400-600 words minimum): Break down the most important legal provisions in plain language.
+5. Common Mistakes & How to Avoid Them (250-400 words minimum): Practical pitfalls people encounter.
+6. Conclusion with Key Takeaways (200 words): Summarize in bullet points.
+${serpSection}
+${linkingSection}
+
+KEY TAKEAWAYS GENERATION:
+After the conclusion, output a JSON array of 4-5 key takeaways preceded by this exact marker:
+<!-- KEY_TAKEAWAYS -->
+[{"takeaway": "One-sentence key insight"}]
+
+FAQ GENERATION:
+After the key takeaways, output a JSON block of 5-6 FAQ items preceded by the exact marker:
+<!-- FAQ_JSON -->
+[{"question": "..?", "answer": "..."}]
+Each FAQ should be a commonly searched question with a concise 2-3 sentence answer.
+
+At the end of the article (BEFORE the KEY_TAKEAWAYS block), add this exact section:
 ---
 
 ### Related Search Terms
@@ -401,27 +658,30 @@ Write a blog article with title: "${topic.titles[language.code as keyof typeof t
 
 Keywords to cover: ${topic.keywords.join(", ")}
 
-Generate a well-structured blog article that educates readers about this area of Moroccan law.`
+Generate a comprehensive, in-depth blog article that educates readers about this area of Moroccan law.
+Make it the BEST, most complete article on this topic on the entire internet.`
         : `Write a blog article with title: "${topic.titles[language.code as keyof typeof topic.titles]}"
 
 Keywords to cover: ${topic.keywords.join(", ")}
 
-Generate a well-structured blog article that educates readers about this area of Moroccan law.
-Use your knowledge of Moroccan legal frameworks and cite specific laws where applicable.`;
+Generate a comprehensive, in-depth blog article that educates readers about this area of Moroccan law.
+Use your knowledge of Moroccan legal frameworks and cite specific laws where applicable.
+Make it the BEST, most complete article on this topic on the entire internet.`;
 
-    // Generate the article using the LLM
+    // Generate the article using the LLM — max_tokens raised from 3000 to 8000
     const response = await client.chat.completions.create({
         model: "google/gemini-3-flash-preview",
         messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt }
         ],
-        max_tokens: 3000,
-        temperature: 0.7,
+        max_tokens: 8000,
+        // Lower temperature for more authoritative, factual content
+        temperature: 0.5,
     });
 
     const content = response.choices[0]?.message?.content || "";
-    console.log(`      ✅ [${language.name}] Done (${content.length} chars)`);
+    console.log(`      ✅ [${language.name}] Done (${content.length} chars, ~${content.trim().split(/\s+/).length} words)`);
 
     return {
         slug: topic.slug,
@@ -431,32 +691,143 @@ Use your knowledge of Moroccan legal frameworks and cite specific laws where app
         content: content,
         image: imageUrl,
         sources: [],
-        generatedAt: new Date()
+        generatedAt: new Date(),
+        keywords: topic.keywords,
+        category: topic.category || "law",
+        keyTakeaways: [],
     };
 }
 
 /**
- * Save a blog article to the filesystem as a Markdown file
+ * Save a blog article to the filesystem as a Markdown file.
+ * Parses optional FAQ JSON from the generated content and adds it
+ * to the frontmatter YAML for Google FAQ rich snippets.
  * 
  * @param blog - The generated blog article
  * @param language - Language configuration
  * @param outputDir - Directory to save blog files
+ * @param validSlugs - List of valid published slugs to protect against hallucinated links
  */
-function saveBlog(blog: GeneratedBlog, language: typeof LANGUAGES[0], outputDir: string): void {
+function saveBlog(blog: GeneratedBlog, language: typeof LANGUAGES[0], outputDir: string, validSlugs: Set<string>): void {
     const filename = `${blog.slug}${language.suffix}.md`;
     const filepath = path.join(outputDir, filename);
 
-    // Build the complete markdown content with frontmatter
+    /**
+     * Prevent LLM internal linking hallucinations.
+     * We scan the content for markdown links matching /blog/slug.
+     * If the slug is NOT in our valid list, we strip the link syntax and keep just the text.
+     */
+    let articleContent = blog.content;
+    const linkRegex = /\[([^\]]+)\]\((?:\/blog\/|https?:\/\/(?:www\.)?9anon\.com\/blog\/)?([^\)]+)\)/g;
+    articleContent = articleContent.replace(linkRegex, (match, anchorText, slugOrUrl) => {
+        // Extract just the slug if it's a full URL
+        const slug = slugOrUrl.split('/').pop()?.split('#')[0] || slugOrUrl;
+
+        if (validSlugs.has(slug)) {
+            // It's a valid internal link
+            return `[${anchorText}](/blog/${slug})`;
+        } else if (slugOrUrl.startsWith('http') && !slugOrUrl.includes('9anon.com')) {
+            // It's an external link (allow it)
+            return match;
+        } else {
+            // It's a hallucinated internal link! Strip it.
+            return anchorText;
+        }
+    });
+
+    /**
+     * Extract FAQ JSON and Key Takeaways from the generated content.
+     * Both markers are stripped from the article body and placed
+     * into the frontmatter YAML for structured data consumption.
+     */
+    let faqYaml = "";
+    let keyTakeawaysYaml = "";
+
+    // --- Extract Key Takeaways ---
+    const takeawaysMarkerIdx = articleContent.indexOf("<!-- KEY_TAKEAWAYS -->");
+    if (takeawaysMarkerIdx !== -1) {
+        const afterTakeaways = articleContent.substring(takeawaysMarkerIdx + "<!-- KEY_TAKEAWAYS -->".length);
+        // Remove the marker and everything after it from the article body (FAQ comes after)
+        articleContent = articleContent.substring(0, takeawaysMarkerIdx).trim();
+
+        try {
+            const jsonMatch = afterTakeaways.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+            if (jsonMatch) {
+                const items: Array<{ takeaway: string }> = JSON.parse(jsonMatch[0]);
+                if (items.length > 0) {
+                    keyTakeawaysYaml = "keyTakeaways:\n" + items.map(item =>
+                        `  - "${item.takeaway.replace(/"/g, '\\"')}"`
+                    ).join("\n");
+                    console.log(`      🎯 Extracted ${items.length} key takeaways`);
+                }
+            }
+
+            // Check if FAQ_JSON marker is in the remaining text after takeaways
+            const remainingText = afterTakeaways.substring((jsonMatch?.index || 0) + (jsonMatch?.[0]?.length || 0));
+            const faqInRemaining = remainingText.indexOf("<!-- FAQ_JSON -->");
+            if (faqInRemaining !== -1) {
+                const faqText = remainingText.substring(faqInRemaining + "<!-- FAQ_JSON -->".length).trim();
+                const faqJsonMatch = faqText.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+                if (faqJsonMatch) {
+                    const faqItems: Array<{ question: string; answer: string }> = JSON.parse(faqJsonMatch[0]);
+                    if (faqItems.length > 0) {
+                        faqYaml = "faq:\n" + faqItems.map(item =>
+                            `  - question: "${item.question.replace(/"/g, '\\"')}"\n    answer: "${item.answer.replace(/"/g, '\\"')}"`
+                        ).join("\n");
+                        console.log(`      📋 Extracted ${faqItems.length} FAQ items for rich snippets`);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`      ⚠️ Failed to parse key takeaways, skipping:`, err);
+        }
+    }
+
+    // --- Extract FAQ JSON (if not already extracted above) ---
+    if (!faqYaml) {
+        const faqMarkerIdx = articleContent.indexOf("<!-- FAQ_JSON -->");
+        if (faqMarkerIdx !== -1) {
+            const afterMarker = articleContent.substring(faqMarkerIdx + "<!-- FAQ_JSON -->".length).trim();
+            // Remove the FAQ marker and everything after it from the article body
+            articleContent = articleContent.substring(0, faqMarkerIdx).trim();
+
+            try {
+                const jsonMatch = afterMarker.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+                if (jsonMatch) {
+                    const faqItems: Array<{ question: string; answer: string }> = JSON.parse(jsonMatch[0]);
+                    if (faqItems.length > 0) {
+                        faqYaml = "faq:\n" + faqItems.map(item =>
+                            `  - question: "${item.question.replace(/"/g, '\\"')}"\n    answer: "${item.answer.replace(/"/g, '\\"')}"`
+                        ).join("\n");
+                        console.log(`      📋 Extracted ${faqItems.length} FAQ items for rich snippets`);
+                    }
+                }
+            } catch (faqErr) {
+                console.warn(`      ⚠️ Failed to parse FAQ JSON, skipping:`, faqErr);
+            }
+        }
+    }
+
+    // --- Build enhanced frontmatter with new SEO fields ---
+    const keywordsYaml = blog.keywords && blog.keywords.length > 0
+        ? `keywords: [${blog.keywords.map(k => `"${k}"`).join(", ")}]\n`
+        : "";
+    const categoryYaml = blog.category ? `category: "${blog.category}"\n` : "";
+    const today = blog.generatedAt.toISOString().split("T")[0];
+
     const frontmatter = `---
 title: "${blog.title}"
-date: "${blog.generatedAt.toISOString().split("T")[0]}"
+date: "${today}"
+lastModified: "${today}"
 description: "${blog.description}"
 image: "${blog.image}"
----
+imageAlt: "${blog.description.slice(0, 120)}"
+author: "9anon AI"
+${keywordsYaml}${categoryYaml}${keyTakeawaysYaml ? keyTakeawaysYaml + "\n" : ""}${faqYaml ? faqYaml + "\n" : ""}---
 
 `;
 
-    const fullContent = frontmatter + blog.content;
+    const fullContent = frontmatter + articleContent;
 
     fs.writeFileSync(filepath, fullContent, "utf-8");
     console.log(`      💾 Saved: ${filename}`);
@@ -467,10 +838,12 @@ image: "${blog.image}"
  * Generates all 8 blog articles in 3 languages and saves them
  */
 async function main(): Promise<void> {
-    console.log("╔══════════════════════════════════════════════════════════════╗");
-    console.log("║     🇲🇦 MOROCCAN LAW MULTILINGUAL BLOG GENERATOR              ║");
-    console.log("║     Step 1: Perplexity sonar-pro searches trending topics     ║");
-    console.log("║     Step 2: Gemini synthesizes → 8 topics × 3 languages      ║");
+    console.log("\n╔══════════════════════════════════════════════════════════════╗");
+    console.log("║     🇲🇦 MOROCCAN LAW MULTILINGUAL BLOG GENERATOR  (v2.0)     ║");
+    console.log("║     Step 1: Perplexity sonar-pro → trending topics           ║");
+    console.log("║     Step 2: SERP competitor analysis → content brief         ║");
+    console.log("║     Step 3: Gemini → 8 topics × 3 languages (2000+ words)   ║");
+    console.log("║     Step 4: Quality validation gate → retry if needed        ║");
     console.log("╚══════════════════════════════════════════════════════════════╝\n");
 
     // Verify API key is set
@@ -523,244 +896,311 @@ async function main(): Promise<void> {
         // Build context from RAG results
         const context = buildContext(sources);
 
-        // Step 1.5: Generate image using Gemini Pro Image via raw OpenRouter API
-        // We use fetch directly because the OpenAI SDK strips multimodal image parts
-        console.log(`   🎨 Generating image for topic...`);
+        // Step 2: SERP competitor analysis (once per topic, shared across languages)
+        const serpBrief = await analyzeSERPCompetitors(topic);
+
+        // Step 3: Generate articles in all 3 languages FIRST (before image)
+        // Image generation is deferred until all languages succeed — this avoids
+        // wasting expensive image API calls if articles fail validation.
         let imageUrl = "";
-        try {
-            /**
-             * Generate a professional blog illustration using Gemini's image model.
-             * We call OpenRouter directly via fetch because the OpenAI SDK's
-             * message.content only captures text — Gemini returns images as
-             * multimodal parts (inline_data) which the SDK discards.
-             */
-            const imagePrompt = [
-                // --- Core directive: scene replication ---
-                `Create a single, hyper-realistic editorial photograph that tells the STORY of this blog article at a glance.`,
-                `Blog title: "${topic.titles.en}".`,
-                `Blog keywords: ${topic.keywords.join(", ")}.`,
+        const savedFiles: Array<{ filepath: string; language: typeof LANGUAGES[0]; blog: GeneratedBlog }> = [];
 
-                // --- Scene composition & narrative ---
-                `SCENE DIRECTION: Reconstruct the exact real-world moment the article describes.`,
-                `Examples of what this means:`,
-                `• A divorce article → a woman sitting across from a lawyer at a desk, signing papers, her expression is conflicted; soft window light rakes across the table.`,
-                `• A labor rights article → a factory floor or open-plan office mid-dispute; a supervisor and a worker face each other, body language tense, coworkers watching in the background.`,
-                `• A real estate article → a young couple standing in the doorway of an empty apartment, the agent gesturing inside; golden-hour light floods the room.`,
-                `• A criminal law article → a dimly lit courtroom corridor; a defendant and their lawyer whispering urgently outside heavy wooden doors.`,
-                `Choose the most visually dramatic and emotionally resonant moment from the topic. Capture mid-action, not posed.`,
-
-                // --- Photographic technique ---
-                `CAMERA: Shot on a full-frame 35mm sensor. Focal length 35-85mm depending on scene intimacy.`,
-                `Use shallow depth of field (f/1.8–f/2.8) to isolate the subject from the environment. Background should be softly bokeh'd but still contextually readable.`,
-                `LIGHTING: Motivated natural light — window light, golden hour, or diffused overcast. Allow dramatic shadows and highlights. Avoid flat, even studio lighting.`,
-                `COLOR GRADE: Muted, desaturated warm tones — think Kodak Portra 400 film stock. Slight grain is acceptable. Blacks should be lifted slightly (cinematic log look).`,
-                `COMPOSITION: Use the rule of thirds or leading lines. Place the emotional anchor (a face, hands on a document, a gesture) at a power point. Include environmental storytelling in the frame edges.`,
-
-                // --- Moroccan identity (subtle) ---
-                `CASTING: All people in the scene must have North African / Moroccan facial features, skin tones, and hair textures. This is the ONLY culturally specific element. Everything else — clothing, setting, props — should be modern and universally relatable. No traditional garments, no ornate architecture, no flags, no calligraphy.`,
-
-                // --- Hard constraints ---
-                `ABSOLUTE RESTRICTIONS: Zero text, zero words, zero watermarks, zero logos, zero UI overlays, zero borders. The image must be a clean photograph with nothing overlaid.`,
-            ].join("\n");
-
-            const rawResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                    "HTTP-Referer": "https://github.com/moroccan-legal-ai",
-                    "X-Title": "9anon - Blog Image Generator",
-                },
-                body: JSON.stringify({
-                    model: "google/gemini-3-pro-image-preview",
-                    messages: [
-                        { role: "user", content: imagePrompt }
-                    ],
-                    modalities: ["image", "text"],
-                }),
-            });
-
-            const responseJson = await rawResponse.json() as any;
-
-            // Debug: log the response structure to understand the format
-            const messageObj = responseJson?.choices?.[0]?.message;
-            console.log(`   📦 Response keys: ${JSON.stringify(Object.keys(responseJson?.choices?.[0] || {}))}`);
-            console.log(`   📦 Message keys: ${JSON.stringify(Object.keys(messageObj || {}))}`);
-
-            let imageBuffer: Buffer | null = null;
-
-            // OpenRouter returns Gemini images in message.images array
-            // Each image object has: { image_url: { url: "data:image/png;base64,..." } }
-            if (messageObj?.images && Array.isArray(messageObj.images) && messageObj.images.length > 0) {
-                const imgObj = messageObj.images[0];
-                const imageDataUrl = imgObj?.image_url?.url;
-
-                if (imageDataUrl) {
-                    console.log(`   📸 Found image data URL (length: ${imageDataUrl.length})`);
-                    // Extract base64 from data URI
-                    const dataMatch = imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)/s);
-                    if (dataMatch) {
-                        imageBuffer = Buffer.from(dataMatch[1], "base64");
-                    } else if (imageDataUrl.startsWith("http")) {
-                        // It's a regular URL, download it
-                        console.log(`   🔗 Downloading image from URL...`);
-                        const dlRes = await fetch(imageDataUrl);
-                        imageBuffer = Buffer.from(await dlRes.arrayBuffer());
-                    }
-                } else {
-                    console.warn(`   ⚠️ images[0] structure:`, JSON.stringify(imgObj).slice(0, 300));
-                }
-            }
-
-            // Format 1: OpenRouter multimodal content array
-            // content: [{type: "text", text: "..."}, {type: "image_url", image_url: {url: "data:image/png;base64,..."}}]
-            if (!imageBuffer && Array.isArray(messageObj?.content)) {
-                for (const part of messageObj.content) {
-                    // Check for image_url part with base64 data URI
-                    if (part.type === "image_url" && part.image_url?.url) {
-                        const dataMatch = part.image_url.url.match(/^data:image\/[^;]+;base64,(.+)/s);
-                        if (dataMatch) {
-                            console.log(`   📸 Found base64 in content array (image_url part)`);
-                            imageBuffer = Buffer.from(dataMatch[1], "base64");
-                            break;
-                        }
-                        // It's a regular URL, download it
-                        console.log(`   🔗 Found URL in content array: ${part.image_url.url.slice(0, 80)}...`);
-                        const dlRes = await fetch(part.image_url.url);
-                        imageBuffer = Buffer.from(await dlRes.arrayBuffer());
-                        break;
-                    }
-                    // Check for inline_data (Gemini native format sometimes passed through)
-                    if (part.inline_data?.data) {
-                        console.log(`   📸 Found inline_data part`);
-                        imageBuffer = Buffer.from(part.inline_data.data, "base64");
-                        break;
-                    }
-                }
-            }
-
-            // Format 2: content is a plain string (text with possible base64 or URL)
-            if (!imageBuffer && typeof messageObj?.content === "string" && messageObj.content.length > 0) {
-                const textContent = messageObj.content;
-                console.log(`   📦 Text content length: ${textContent.length}, preview: ${textContent.slice(0, 100)}...`);
-
-                // Check for data URI in the text
-                const dataUriMatch = textContent.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=\s]+)/);
-                if (dataUriMatch) {
-                    console.log(`   📸 Found data URI in text content`);
-                    imageBuffer = Buffer.from(dataUriMatch[1].replace(/\s/g, ""), "base64");
-                }
-
-                // Check for raw base64 (long string with no spaces)
-                if (!imageBuffer && textContent.length > 500 && !textContent.includes(" ")) {
-                    console.log(`   📸 Text looks like raw base64`);
-                    imageBuffer = Buffer.from(textContent.trim(), "base64");
-                }
-
-                // Check for URL
-                if (!imageBuffer) {
-                    const mdMatch = textContent.match(/!\[.*?\]\(([^)]+)\)/);
-                    const urlMatch = textContent.match(/https?:\/\/[^\s)]+/);
-                    const url = mdMatch ? mdMatch[1] : urlMatch ? urlMatch[0] : "";
-                    if (url) {
-                        console.log(`   🔗 Found URL in text: ${url.slice(0, 80)}...`);
-                        const dlRes = await fetch(url);
-                        imageBuffer = Buffer.from(await dlRes.arrayBuffer());
-                    }
-                }
-            }
-
-            if (imageBuffer && imageBuffer.length > 100) {
-                // Ensure output directory exists
-                const imagesDir = path.resolve(__dirname, "..", "..", "FE", "public", "blog-images");
-                if (!fs.existsSync(imagesDir)) {
-                    fs.mkdirSync(imagesDir, { recursive: true });
-                }
-
-                const finalImagePath = path.join(imagesDir, `${topic.slug}.png`);
-                const logoPath = path.resolve(__dirname, "..", "..", "FE", "public", "Layer 3.png");
-
-                /**
-                 * Composite the 9anon logo onto the bottom-left corner.
-                 * Logo is resized to 6% of image width, with 40% opacity and 20px padding.
-                 */
-                const mainImage = sharp(imageBuffer);
-                const metadata = await mainImage.metadata();
-                const imgWidth = metadata.width || 800;
-                const imgHeight = metadata.height || 600;
-                const logoSize = Math.round(imgWidth * 0.06); // 6% of image width — small watermark
-                const padding = 20; // px padding from bottom-left edges
-
-                // Resize logo and lower opacity to 40%
-                const resizedLogo = await sharp(logoPath)
-                    .resize(logoSize)
-                    .ensureAlpha()
-                    .linear(0.4, 0) // Scale all channels including alpha by 0.4 for 40% opacity
-                    .toBuffer();
-
-                // Get resized logo dimensions for precise placement
-                const logoMeta = await sharp(resizedLogo).metadata();
-                const logoHeight = logoMeta.height || logoSize;
-
-                await sharp(imageBuffer)
-                    .composite([{
-                        input: resizedLogo,
-                        left: padding,
-                        top: imgHeight - logoHeight - padding,
-                    }])
-                    .png()
-                    .toFile(finalImagePath);
-
-                imageUrl = `/blog-images/${topic.slug}.png`;
-                console.log(`   ✅ Image saved to ${imageUrl} (${(imageBuffer.length / 1024).toFixed(1)} KB)`);
-            } else {
-                console.warn(`   ⚠️ Could not extract a valid image from the response.`);
-                // Log the full structure for debugging
-                console.warn(`   📝 Full response structure:`, JSON.stringify(responseJson?.choices?.[0]?.message || {}).slice(0, 500));
-            }
-        } catch (imageErr) {
-            console.error(`   ❌ Failed to generate/composite image:`, imageErr);
-        }
-
-        // Step 2: Generate in all 3 languages
         for (let langIdx = 0; langIdx < LANGUAGES.length; langIdx++) {
             const language = LANGUAGES[langIdx];
 
             try {
-                const blog = await generateBlogInLanguage(topic, language, context, topicIdx + 1, langIdx, imageUrl);
+                // Build internal link bank for this language
+                const linkBank = buildLinkBank(outputDir, topic.slug, language.code);
+
+                // Single generation call — no retries to save credits.
+                // The prompt is forceful enough about length requirements.
+                const blog = await generateBlogInLanguage(
+                    topic, language, context, topicIdx + 1, langIdx,
+                    imageUrl, serpBrief, linkBank
+                );
+
+                // Run quality validation as soft warnings (log but always save)
+                const warnings = validateArticleQuality(blog.content, language.code);
+                if (warnings.length === 0) {
+                    console.log(`      ✅ Quality check passed`);
+                } else {
+                    console.log(`      ⚠️ Quality warnings (saving anyway):`);
+                    warnings.forEach(w => console.log(`         - ${w}`));
+                }
+
                 blog.sources = sources.map(s => s.document_name || s.source_file || "Unknown");
-                saveBlog(blog, language, outputDir);
+                saveBlog(blog, language, outputDir, existingSlugs);
                 successCount++;
 
-                /**
-                 * Auto-commit the newly generated blog to Git.
-                 * Executes git add and commit within the FE directory.
-                 */
-                try {
-                    const feDir = path.resolve(__dirname, "..", "..", "FE");
-                    const filename = `${blog.slug}${language.suffix}.md`;
-                    // Using forward slashes for relative path within FE directory
-                    const relPath = `content/blogs/${filename}`;
-
-                    // Add the specific newly created blog file
-                    execSync(`git add "${relPath}"`, { cwd: feDir });
-
-                    // Map language code to the format required by the user (eng, fr, ar)
-                    const langStr = language.code === 'en' ? 'eng' : (language.code === 'fr' ? 'fr' : 'ar');
-                    const safeSlug = blog.slug.replace(/"/g, '\\"');
-
-                    // Commit with the required message format
-                    execSync(`git commit -m "feat(blog): added blog ${safeSlug} in ${langStr}"`, { cwd: feDir, stdio: 'pipe' });
-                    console.log(`      🚀 Git committed: ${filename}`);
-                } catch (gitError) {
-                    console.warn(`      ⚠️ Git commit skipped or failed for ${blog.slug} (might be unchanged)`);
-                }
+                // Track saved file for image path update later
+                const filename = `${blog.slug}${language.suffix}.md`;
+                savedFiles.push({
+                    filepath: path.join(outputDir, filename),
+                    language,
+                    blog,
+                });
 
                 // Add a small delay between API calls to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 1500));
             } catch (error) {
                 console.error(`      ❌ [${language.name}] Failed:`, error);
                 failCount++;
+            }
+        }
+
+        // Step 4: Generate image AFTER all articles are saved
+        // Only generate if at least one article was saved successfully
+        if (savedFiles.length > 0) {
+            console.log(`   🎨 Generating image for topic...`);
+            try {
+                /**
+                 * Generate a contextual blog illustration using Gemini's image model.
+                 * Now uses actual article content (key takeaways + description) from
+                 * the saved files to produce images tightly tied to the blog content.
+                 * Resized to 1200×630 (Open Graph standard) for optimal social previews.
+                 */
+
+                // Extract article context from the first saved file for image grounding
+                const firstSaved = savedFiles[0];
+                const articleDescription = firstSaved.blog.description;
+                const articleKeyTakeaways = firstSaved.blog.keyTakeaways || [];
+                const articleContext = articleKeyTakeaways.length > 0
+                    ? articleKeyTakeaways.slice(0, 3).join(". ")
+                    : articleDescription;
+
+                const imagePrompt = [
+                    // --- Core directive: content-aware scene ---
+                    `Create a single, photorealistic editorial photograph for a legal blog article.`,
+                    `The image must visually represent THIS SPECIFIC article:`,
+                    ``,
+                    `ARTICLE TITLE: "${topic.titles.en}"`,
+                    `ARTICLE SUMMARY: ${articleDescription}`,
+                    `KEY POINTS: ${articleContext}`,
+                    `KEYWORDS: ${topic.keywords.join(", ")}`,
+                    ``,
+
+                    // --- Scene composition: derive from actual content ---
+                    `SCENE DIRECTION: Based on the article summary and key points above, create a SPECIFIC scene that visually embodies the core message.`,
+                    `Show a real moment that a reader of this article would recognize — people in a relevant professional or legal setting, interacting with documents, devices, or institutional environments that match the topic.`,
+                    `The scene should feel like documentary photography — authentic, mid-action, unstaged.`,
+                    `Choose the most visually dramatic moment from the topic. Capture motion, expression, and environment.`,
+                    ``,
+
+                    // --- Professional photography ---
+                    `CAMERA: Full-frame 35mm, 35-85mm focal length. Shallow depth of field (f/1.8–f/2.8).`,
+                    `LIGHTING: Natural motivated light — window light, golden hour, or soft overcast. Strong contrast with dramatic shadows.`,
+                    `COLOR: Warm cinematic tones, Kodak Portra 400 feel. Slight film grain. Lifted blacks.`,
+                    `COMPOSITION: Rule of thirds. Emotional anchor at a power point. Environmental context in frame edges.`,
+                    `ASPECT RATIO: Exactly 1200×630 pixels (wide landscape, social media preview format).`,
+                    ``,
+
+                    // --- Moroccan identity (subtle, authentic) ---
+                    `PEOPLE: North African / Moroccan appearance — authentic features, skin tones, and hair. Modern clothing. No traditional garments, ornate architecture, flags, or calligraphy. The setting should feel contemporary and international.`,
+                    ``,
+
+                    // --- Hard constraints ---
+                    `ABSOLUTE RESTRICTIONS: ZERO text, words, watermarks, logos, UI overlays, captions, or borders anywhere in the image. Pure photograph only.`,
+                ].join("\n");
+
+                const rawResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                        "HTTP-Referer": "https://github.com/moroccan-legal-ai",
+                        "X-Title": "9anon - Blog Image Generator",
+                    },
+                    body: JSON.stringify({
+                        model: "google/gemini-3.1-flash-image-preview",
+                        messages: [
+                            { role: "user", content: imagePrompt }
+                        ],
+                        modalities: ["image", "text"],
+                    }),
+                });
+
+                const responseJson = await rawResponse.json() as any;
+
+                // Debug: log the response structure to understand the format
+                const messageObj = responseJson?.choices?.[0]?.message;
+                console.log(`   📦 Response keys: ${JSON.stringify(Object.keys(responseJson?.choices?.[0] || {}))}`);
+                console.log(`   📦 Message keys: ${JSON.stringify(Object.keys(messageObj || {}))}`);
+
+                let imageBuffer: Buffer | null = null;
+
+                // OpenRouter returns Gemini images in message.images array
+                // Each image object has: { image_url: { url: "data:image/png;base64,..." } }
+                if (messageObj?.images && Array.isArray(messageObj.images) && messageObj.images.length > 0) {
+                    const imgObj = messageObj.images[0];
+                    const imageDataUrl = imgObj?.image_url?.url;
+
+                    if (imageDataUrl) {
+                        console.log(`   📸 Found image data URL (length: ${imageDataUrl.length})`);
+                        // Extract base64 from data URI
+                        const dataMatch = imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)/s);
+                        if (dataMatch) {
+                            imageBuffer = Buffer.from(dataMatch[1], "base64");
+                        } else if (imageDataUrl.startsWith("http")) {
+                            // It's a regular URL, download it
+                            console.log(`   🔗 Downloading image from URL...`);
+                            const dlRes = await fetch(imageDataUrl);
+                            imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+                        }
+                    } else {
+                        console.warn(`   ⚠️ images[0] structure:`, JSON.stringify(imgObj).slice(0, 300));
+                    }
+                }
+
+                // Format 1: OpenRouter multimodal content array
+                // content: [{type: "text", text: "..."}, {type: "image_url", image_url: {url: "data:image/png;base64,..."}}]
+                if (!imageBuffer && Array.isArray(messageObj?.content)) {
+                    for (const part of messageObj.content) {
+                        // Check for image_url part with base64 data URI
+                        if (part.type === "image_url" && part.image_url?.url) {
+                            const dataMatch = part.image_url.url.match(/^data:image\/[^;]+;base64,(.+)/s);
+                            if (dataMatch) {
+                                console.log(`   📸 Found base64 in content array (image_url part)`);
+                                imageBuffer = Buffer.from(dataMatch[1], "base64");
+                                break;
+                            }
+                            // It's a regular URL, download it
+                            console.log(`   🔗 Found URL in content array: ${part.image_url.url.slice(0, 80)}...`);
+                            const dlRes = await fetch(part.image_url.url);
+                            imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+                            break;
+                        }
+                        // Check for inline_data (Gemini native format sometimes passed through)
+                        if (part.inline_data?.data) {
+                            console.log(`   📸 Found inline_data part`);
+                            imageBuffer = Buffer.from(part.inline_data.data, "base64");
+                            break;
+                        }
+                    }
+                }
+
+                // Format 2: content is a plain string (text with possible base64 or URL)
+                if (!imageBuffer && typeof messageObj?.content === "string" && messageObj.content.length > 0) {
+                    const textContent = messageObj.content;
+                    console.log(`   📦 Text content length: ${textContent.length}, preview: ${textContent.slice(0, 100)}...`);
+
+                    // Check for data URI in the text
+                    const dataUriMatch = textContent.match(/data:image\/[^;]+;base664,([A-Za-z0-9+/=\s]+)/);
+                    if (dataUriMatch) {
+                        console.log(`   📸 Found data URI in text content`);
+                        imageBuffer = Buffer.from(dataUriMatch[1].replace(/\s/g, ""), "base64");
+                    }
+
+                    // Check for raw base64 (long string with no spaces)
+                    if (!imageBuffer && textContent.length > 500 && !textContent.includes(" ")) {
+                        console.log(`   📸 Text looks like raw base64`);
+                        imageBuffer = Buffer.from(textContent.trim(), "base64");
+                    }
+
+                    // Check for URL
+                    if (!imageBuffer) {
+                        const mdMatch = textContent.match(/!\[.*?\]\(([^)]+)\)/);
+                        const urlMatch = textContent.match(/https?:\/\/[^\s)]+/);
+                        const url = mdMatch ? mdMatch[1] : urlMatch ? urlMatch[0] : "";
+                        if (url) {
+                            console.log(`   🔗 Found URL in text: ${url.slice(0, 80)}...`);
+                            const dlRes = await fetch(url);
+                            imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+                        }
+                    }
+                }
+
+                if (imageBuffer && imageBuffer.length > 100) {
+                    // Ensure output directory exists
+                    const imagesDir = path.resolve(__dirname, "..", "..", "FE", "public", "blog-images");
+                    if (!fs.existsSync(imagesDir)) {
+                        fs.mkdirSync(imagesDir, { recursive: true });
+                    }
+
+                    const finalImagePath = path.join(imagesDir, `${topic.slug}.webp`);
+                    const logoPath = path.resolve(__dirname, "..", "..", "FE", "public", "Layer 3.png");
+
+                    /**
+                     * Resize to OG-standard 1200×630 and composite the 9anon logo.
+                     * This exact aspect ratio is optimal for Facebook, Twitter, LinkedIn,
+                     * WhatsApp, and Google Discover preview cards.
+                     */
+                    const resizedImage = await sharp(imageBuffer)
+                        .resize(1200, 630, { fit: "cover", position: "center" })
+                        .toBuffer();
+
+                    const logoSize = Math.round(1200 * 0.06); // 6% of 1200px width
+                    const padding = 20;
+
+                    // Resize logo and lower opacity to 40%
+                    const resizedLogo = await sharp(logoPath)
+                        .resize(logoSize)
+                        .ensureAlpha()
+                        .linear(0.4, 0)
+                        .toBuffer();
+
+                    const logoMeta = await sharp(resizedLogo).metadata();
+                    const logoHeight = logoMeta.height || logoSize;
+
+                    // Composite logo onto bottom-left corner and output as WebP
+                    await sharp(resizedImage)
+                        .composite([{
+                            input: resizedLogo,
+                            left: padding,
+                            top: 630 - logoHeight - padding,
+                        }])
+                        .webp({ quality: 85 })
+                        .toFile(finalImagePath);
+
+                    imageUrl = `/blog-images/${topic.slug}.webp`;
+                    console.log(`   ✅ Image saved as WebP to ${imageUrl}`);
+
+                    // Retroactively update all saved markdown files with the image path
+                    for (const saved of savedFiles) {
+                        try {
+                            let mdContent = fs.readFileSync(saved.filepath, "utf-8");
+                            // Replace the empty image field in frontmatter
+                            mdContent = mdContent.replace(/^image: ""\s*$/m, `image: "${imageUrl}"`);
+                            fs.writeFileSync(saved.filepath, mdContent, "utf-8");
+                            console.log(`      📝 Updated image path in: ${path.basename(saved.filepath)}`);
+                        } catch (updateErr) {
+                            console.warn(`      ⚠️ Failed to update image in ${path.basename(saved.filepath)}`);
+                        }
+                    }
+                } else {
+                    console.warn(`   ⚠️ Could not extract a valid image from the response.`);
+                    console.warn(`   📝 Full response structure:`, JSON.stringify(responseJson?.choices?.[0]?.message || {}).slice(0, 500));
+                }
+            } catch (imageErr) {
+                console.error(`   ❌ Failed to generate/composite image:`, imageErr);
+            }
+        }
+
+        // Step 5: Git commit all saved files + image for this topic
+        const feDir = path.resolve(__dirname, "..", "..", "FE");
+
+        // Git add the image file if it was generated
+        if (imageUrl) {
+            try {
+                const imageRelPath = `public${imageUrl}`; // e.g. public/blog-images/slug.webp
+                execSync(`git add "${imageRelPath}"`, { cwd: feDir });
+            } catch { /* image might not exist if gen failed */ }
+        }
+
+        // Git add + commit each markdown file
+        for (const saved of savedFiles) {
+            try {
+                const filename = `${saved.blog.slug}${saved.language.suffix}.md`;
+                const relPath = `content/blogs/${filename}`;
+
+                execSync(`git add "${relPath}"`, { cwd: feDir });
+
+                const langStr = saved.language.code === 'en' ? 'eng' : (saved.language.code === 'fr' ? 'fr' : 'ar');
+                const safeSlug = saved.blog.slug.replace(/"/g, '\\"');
+
+                execSync(`git commit -m "feat(blog): added blog ${safeSlug} in ${langStr}"`, { cwd: feDir, stdio: 'pipe' });
+                console.log(`      🚀 Git committed: ${filename}`);
+            } catch (gitError) {
+                console.warn(`      ⚠️ Git commit skipped or failed for ${path.basename(saved.filepath)}`);
             }
         }
 

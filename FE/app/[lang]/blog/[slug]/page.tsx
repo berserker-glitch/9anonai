@@ -13,6 +13,7 @@ import { TableOfContents } from "@/components/blog/table-of-contents";
 import { ShareButtons } from "@/components/blog/share-buttons";
 import { ReadingProgress } from "@/components/blog/reading-progress";
 import { getMarkdownComponents } from "@/components/blog/markdown-components";
+import { BlogJsonLd } from "@/components/blog/blog-json-ld";
 
 export async function generateStaticParams() {
     const supportedLangs: BlogLanguage[] = ["ar", "fr", "en"];
@@ -56,6 +57,10 @@ export async function generateMetadata({ params }: { params: Promise<{ lang: Blo
     return {
         title: `${post.title}${titles[lang] || titles.ar}`,
         description: post.description,
+        // Keywords meta tag for SEO
+        ...(post.keywords && post.keywords.length > 0 ? {
+            keywords: post.keywords.join(", "),
+        } : {}),
         alternates: {
             canonical: `https://9anonai.com/${lang}/blog/${slug}`,
             languages: {
@@ -69,14 +74,15 @@ export async function generateMetadata({ params }: { params: Promise<{ lang: Blo
             description: post.description,
             type: "article",
             publishedTime: post.date,
-            authors: ["9anon AI Team"],
+            modifiedTime: post.lastModified || post.date,
+            authors: [post.author || "9anon AI Team"],
             locale: lang === "ar" ? "ar_MA" : lang === "fr" ? "fr_MA" : "en_US",
             // OG image: enables rich previews on all major platforms
             images: [{
                 url: ogImage,
                 width: 1200,
                 height: 630,
-                alt: post.title,
+                alt: post.imageAlt || post.title,
             }],
         },
         // Twitter/X large card with image
@@ -97,7 +103,7 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
         notFound();
     }
 
-    const relatedPosts = getRelatedPosts(slug, lang);
+    const relatedPosts = getRelatedPosts(slug, lang, 3, post.keywords);
     const dir = lang === "ar" ? "rtl" : "ltr";
     const isRtl = lang === "ar";
     const pageUrl = `https://9anonai.com/${lang}/blog/${slug}`;
@@ -125,58 +131,22 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
 
     const t = labels[lang] || labels.ar;
 
-    // JSON-LD Schema for Blog Posting (enhanced with wordCount + image for Google rich results)
-    const absoluteImageUrl = post.image
-        ? `https://9anonai.com${post.image}`
-        : null;
-
-    const jsonLd: Record<string, unknown> = {
-        "@context": "https://schema.org",
-        "@type": "BlogPosting",
-        "headline": post.title,
-        "datePublished": post.date,
-        "dateModified": post.date,
-        "description": post.description,
-        "wordCount": post.content.trim().split(/\s+/).length,
-        "url": pageUrl,
-        "author": {
-            "@type": "Organization",
-            "name": "9anon AI Team",
-            "url": "https://9anonai.com"
-        },
-        "publisher": {
-            "@type": "Organization",
-            "name": "9anon AI",
-            "logo": {
-                "@type": "ImageObject",
-                "url": "https://9anonai.com/logo.png"
-            }
-        },
-        "mainEntityOfPage": {
-            "@type": "WebPage",
-            "@id": pageUrl
-        },
-        "inLanguage": lang,
-    };
-
-    // Only add image to schema if the post has one — helps Google index article images
-    // and qualifies the post for "article with image" rich results
-    if (absoluteImageUrl) {
-        jsonLd["image"] = {
-            "@type": "ImageObject",
-            "url": absoluteImageUrl,
-            "width": 1200,
-            "height": 630,
-            "caption": post.title,
-        };
-    }
-
     return (
         <div className={`min-h-screen bg-background text-foreground font-sans ${isRtl ? "font-arabic" : ""}`} dir={dir}>
-            {/* BlogPosting JSON-LD */}
-            <script
-                type="application/ld+json"
-                dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+            {/* Article + FAQ + Breadcrumb JSON-LD via reusable BlogJsonLd component */}
+            <BlogJsonLd
+                title={post.title}
+                description={post.description}
+                date={post.date}
+                lastModified={post.lastModified}
+                author={post.author}
+                image={post.image}
+                imageAlt={post.imageAlt}
+                url={pageUrl}
+                slug={slug}
+                lang={lang}
+                faq={post.faq}
+                keyTakeaways={post.keyTakeaways}
             />
 
             <Header />
@@ -199,7 +169,7 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
                     <article className="flex-1 min-w-0 prose prose-lg dark:prose-invert prose-headings:font-display prose-headings:font-bold prose-h1:text-4xl prose-h2:text-2xl prose-a:text-primary prose-a:no-underline hover:prose-a:underline max-w-none">
                         <header className="mb-10 not-prose border-b border-border/40 pb-10">
                             {post.image && (
-                                <div className="mb-10">
+                                <figure className="mb-10">
                                     {/* Using plain img to avoid next/image fill conflicts inside prose context */}
                                     <div
                                         className="w-full rounded-2xl overflow-hidden shadow-lg border border-border/40"
@@ -208,14 +178,16 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
                                             src={post.image}
-                                            alt={post.title}
+                                            alt={post.imageAlt || post.title}
+                                            title={post.imageAlt || post.title}
+                                            loading="eager"
                                             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
                                         />
                                         {/* Subtle gradient overlay */}
                                         <div style={{ position: "absolute", inset: 0 }} className="bg-gradient-to-t from-background/40 to-transparent pointer-events-none" />
                                     </div>
-                                    {/* AI-generated image disclaimer */}
-                                    <p className="mt-2 text-xs text-muted-foreground/60 flex items-center gap-1.5">
+                                    {/* AI-generated image disclaimer as figcaption — Google uses this for image context */}
+                                    <figcaption className="mt-2 text-xs text-muted-foreground/60 flex items-center gap-1.5">
                                         <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                         </svg>
@@ -226,8 +198,8 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
                                                     ? "Cette image a été générée par intelligence artificielle à des fins illustratives. Les personnes et scènes représentées ne sont pas réelles."
                                                     : "This image was AI-generated for illustrative purposes. Any people or scenes depicted are not real."}
                                         </span>
-                                    </p>
-                                </div>
+                                    </figcaption>
+                                </figure>
                             )}
                             <h1 className="text-4xl sm:text-5xl font-display font-bold mb-6 text-foreground leading-tight">
                                 {post.title}

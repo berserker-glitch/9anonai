@@ -26,11 +26,15 @@ import { ScrollToBottom } from "@/components/utility/scroll-to-bottom";
 import { ConfirmModal } from "@/components/utility/modal";
 import { SettingsModal } from "@/components/settings/settings-modal";
 import { FilesModal } from "@/components/chat/files-modal";
+import { FeedbackModal } from "@/components/chat/feedback-modal";
+import { AttachButton } from "@/components/interaction/attach-button";
+import { FilePreview } from "@/components/chat/file-preview";
 
 // UI Components
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 
 // Types
 interface Message {
@@ -79,6 +83,7 @@ export default function NewChatPage() {
     const [showWelcome, setShowWelcome] = useState(true);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [filesModalOpen, setFilesModalOpen] = useState(false);
+    const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
 
     const messageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -88,6 +93,12 @@ export default function NewChatPage() {
             router.push("/login");
         }
     }, [user, authLoading, router]);
+
+    // Show feedback modal immediately if not dismissed
+    useEffect(() => {
+        if (!token || !user || user.feedbackDismissed) return;
+        setFeedbackModalOpen(true);
+    }, [token, user]);
 
     // Load chat history
     useEffect(() => {
@@ -226,6 +237,62 @@ export default function NewChatPage() {
             }
         }
 
+        // Read text/md/csv files to provide context to the AI
+        let extractedTextContext = "";
+        const textFiles = attachedFiles.filter(f =>
+            f.type === "text/plain" || f.type === "text/markdown" || f.type === "text/csv" || f.name.endsWith('.md') || f.name.endsWith('.txt') || f.name.endsWith('.csv')
+        );
+
+        for (const file of textFiles) {
+            try {
+                const text = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target?.result as string);
+                    reader.onerror = reject;
+                    reader.readAsText(file);
+                });
+                extractedTextContext += `\n\n--- Content of attached file: ${file.name} ---\n${text}\n-----------------------------------\n`;
+            } catch (err) {
+                console.error(`Failed to read ${file.name}`, err);
+            }
+        }
+
+        const systemMessageWithFiles = extractedTextContext
+            ? `I have attached some files for your reference. Here is their content:\n${extractedTextContext}\n\nMy question/message is: ${content}`
+            : content;
+
+        // Upload files to server
+        let uploadedFilesData: any[] = [];
+        if (attachedFiles.length > 0) {
+            try {
+                const formData = new FormData();
+                attachedFiles.forEach(file => formData.append("files", file));
+
+                const uploadRes = await fetch(`${API_URL}/upload/multiple`, {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: formData
+                });
+
+                if (uploadRes.ok) {
+                    const uploadResult = await uploadRes.json();
+                    if (uploadResult.success && uploadResult.files) {
+                        uploadedFilesData = uploadResult.files.map((f: any) => ({
+                            id: f.id,
+                            url: `${API_URL}/upload/files/${f.id}/download`,
+                            name: f.originalName,
+                            mimetype: f.mimetype,
+                            size: f.size
+                        }));
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to upload files to server", err);
+            }
+        }
+
         // Create image URLs for display
         const imageUrls = attachedFiles
             .filter(f => f.type.startsWith("image/"))
@@ -233,7 +300,13 @@ export default function NewChatPage() {
 
         const otherFiles = attachedFiles
             .filter(f => !f.type.startsWith("image/"))
-            .map(f => ({ name: f.name, type: f.type }));
+            .map(f => ({
+                name: f.name,
+                type: f.type,
+                url: URL.createObjectURL(f),
+                size: f.size,
+                mimetype: f.type
+            }));
 
         // Add user message
         const userMessage: Message = {
@@ -254,7 +327,11 @@ export default function NewChatPage() {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify({ role: "user", content: content }),
+                body: JSON.stringify({
+                    role: "user",
+                    content: content,
+                    files: uploadedFilesData.length > 0 ? JSON.stringify(uploadedFilesData) : undefined
+                }),
             });
         } catch (e) {
             console.error("Failed to save user message", e);
@@ -319,14 +396,20 @@ export default function NewChatPage() {
                     "Authorization": `Bearer ${token}`,
                 },
                 body: JSON.stringify({
-                    message: content,
+                    message: systemMessageWithFiles,
                     history: messages,
                     images: imageData,
                     chatId: currentChatId, // Pass chatId for backend persistence
+                    files: uploadedFilesData.length > 0 ? uploadedFilesData.map(f => f.id) : undefined // Only send the IDs here for association if needed
                 }),
             });
 
             setAttachedFiles([]);
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+            }
 
             if (!response.body) throw new Error("No response body");
 
@@ -395,7 +478,11 @@ export default function NewChatPage() {
             setMessages(prev =>
                 prev.map(m =>
                     m.id === assistantId
-                        ? { ...m, content: "Sorry, there was an error. Please try again.", isThinking: false }
+                        ? {
+                            ...m,
+                            content: m.content ? m.content + "\n\n*[Connection interrupted]*" : "Sorry, there was an error. Please try again.",
+                            isThinking: false
+                        }
                         : m
                 )
             );
@@ -441,6 +528,11 @@ export default function NewChatPage() {
                 }),
             });
 
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+            }
+
             if (!response.body) throw new Error("No response body");
 
             const reader = response.body.getReader();
@@ -483,12 +575,19 @@ export default function NewChatPage() {
                     }
                 }
             }
+
+            // Ensure thinking state is cleared
+            setMessages(prev => prev.map(m => m.id === newAssistantId ? { ...m, isThinking: false } : m));
         } catch (error) {
             console.error("Regenerate error:", error);
             setMessages(prev =>
                 prev.map(m =>
                     m.id === newAssistantId
-                        ? { ...m, content: "Sorry, there was an error. Please try again.", isThinking: false }
+                        ? {
+                            ...m,
+                            content: m.content ? m.content + "\n\n*[Connection interrupted]*" : "Sorry, there was an error. Please try again.",
+                            isThinking: false
+                        }
                         : m
                 )
             );
@@ -578,39 +677,41 @@ export default function NewChatPage() {
                             </p>
                             <div className="w-full max-w-2xl">
                                 <ChatInput onSubmit={handleSendMessage}>
-
-                                    <div className="relative flex-1">
-                                        {attachedFiles.length > 0 && (
-                                            <div className="flex gap-2 mb-2 flex-wrap pb-2 border-b border-border">
-                                                {attachedFiles.map((file, idx) => (
-                                                    <div key={idx} className="relative">
-                                                        {file.type.startsWith("image/") ? (
-                                                            <img src={URL.createObjectURL(file)} alt={file.name} className="h-16 w-16 object-cover rounded-lg" />
-                                                        ) : (
-                                                            <div className="h-16 w-16 flex items-center justify-center bg-muted rounded-lg text-xs">{file.name.slice(-4)}</div>
-                                                        )}
-                                                        <button
-                                                            onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                                                            className="absolute -top-1 -right-1 bg-destructive text-white rounded-full w-4 h-4 flex items-center justify-center text-xs"
-                                                        >
-                                                            ✕
-                                                        </button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                        <Textarea
-                                            placeholder="Message 9anon AI..."
-                                            value={inputValue}
-                                            onChange={(e) => setInputValue(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === "Enter" && !e.shiftKey) {
-                                                    e.preventDefault();
-                                                    handleSendMessage();
-                                                }
-                                            }}
-                                            className="resize-none min-h-[48px] max-h-[200px]"
-                                        />
+                                    <div className="flex-1 flex items-end gap-2 w-full min-w-0">
+                                        <AttachButton onFilesSelected={handleFileUpload} />
+                                        <div className="relative flex-1 w-full min-w-0">
+                                            {attachedFiles.length > 0 && (
+                                                <div className="flex gap-2 mb-2 flex-wrap pb-2 border-b border-border">
+                                                    {attachedFiles.map((file, idx) => (
+                                                        <FilePreview
+                                                            key={idx}
+                                                            file={{
+                                                                id: idx.toString(),
+                                                                name: file.name,
+                                                                url: URL.createObjectURL(file),
+                                                                mimetype: file.type,
+                                                                size: file.size
+                                                            }}
+                                                            mode="input"
+                                                            onRemove={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <Textarea
+                                                placeholder="Message 9anon AI..."
+                                                value={inputValue}
+                                                onChange={(e) => setInputValue(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter" && !e.shiftKey) {
+                                                        e.preventDefault();
+                                                        handleSendMessage();
+                                                    }
+                                                }}
+                                                disabled={isGenerating}
+                                                className="resize-none min-h-[48px] max-h-[200px]"
+                                            />
+                                        </div>
                                     </div>
                                 </ChatInput>
                             </div>
@@ -645,27 +746,31 @@ export default function NewChatPage() {
                                         <MessageBubble key={message.id} variant={message.role}>
                                             {message.role === "user" ? (
                                                 <div className="flex flex-col items-end">
-                                                    {message.images && message.images.length > 0 && (
-                                                        <div className="flex gap-2 mb-2 justify-end flex-wrap">
-                                                            {message.images.map((img, idx) => (
-                                                                <img key={idx} src={img} alt={`Attached ${idx + 1}`} className="h-20 w-20 object-cover rounded-lg border border-border" />
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                    {message.files && message.files.length > 0 && (
-                                                        <div className="flex gap-2 mb-2 justify-end flex-wrap">
-                                                            {message.files.map((file, idx) => (
-                                                                <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg border text-xs">
-                                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-                                                                        <polyline points="14 2 14 8 20 8" />
-                                                                    </svg>
-                                                                    <span className="max-w-[100px] truncate">{file.name}</span>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
                                                     <UserMessage>
+                                                        {message.images && message.images.length > 0 && (
+                                                            <div className="flex gap-2 mb-2 flex-wrap">
+                                                                {message.images.map((img, idx) => (
+                                                                    <AuthenticatedImage key={idx} src={img} alt={`Attached ${idx + 1}`} className="h-24 w-24 object-cover rounded-xl border border-white/20 shadow-sm" />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {message.files && message.files.length > 0 && (
+                                                            <div className="flex gap-2 mb-2 flex-wrap">
+                                                                {message.files.map((file, idx) => (
+                                                                    <FilePreview
+                                                                        key={idx}
+                                                                        file={{
+                                                                            id: (file as any).id || idx.toString(),
+                                                                            name: file.name,
+                                                                            url: (file as any).url || "",
+                                                                            mimetype: (file as any).mimetype || file.type,
+                                                                            size: (file as any).size || 0
+                                                                        }}
+                                                                        mode="display"
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                         <MessageContent content={message.content} />
                                                     </UserMessage>
                                                     <MessageTimestamp date={message.timestamp} align="right" />
@@ -758,36 +863,41 @@ export default function NewChatPage() {
                     {/* Input Area when not in welcome mode */}
                     {!showWelcome && (
                         <ChatInput onSubmit={handleSendMessage} isLoading={isGenerating}>
-
-                            <div className="relative flex-1">
-                                {attachedFiles.length > 0 && (
-                                    <div className="flex gap-2 mb-2 flex-wrap">
-                                        {attachedFiles.map((file, idx) => (
-                                            <div key={idx} className="flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-xs">
-                                                <span className="max-w-[100px] truncate">{file.name}</span>
-                                                <button
-                                                    onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                                                    className="text-muted-foreground hover:text-destructive"
-                                                >
-                                                    ✕
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                                <Textarea
-                                    placeholder="Message 9anon AI..."
-                                    value={inputValue}
-                                    onChange={(e) => setInputValue(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter" && !e.shiftKey) {
-                                            e.preventDefault();
-                                            handleSendMessage();
-                                        }
-                                    }}
-                                    disabled={isGenerating}
-                                    className="resize-none min-h-[48px] max-h-[200px]"
-                                />
+                            <div className="flex-1 flex items-end gap-2 w-full min-w-0">
+                                <AttachButton onFilesSelected={handleFileUpload} />
+                                <div className="relative flex-1 w-full min-w-0">
+                                    {attachedFiles.length > 0 && (
+                                        <div className="flex gap-2 mb-2 flex-wrap">
+                                            {attachedFiles.map((file, idx) => (
+                                                <FilePreview
+                                                    key={idx}
+                                                    file={{
+                                                        id: idx.toString(),
+                                                        name: file.name,
+                                                        url: URL.createObjectURL(file),
+                                                        mimetype: file.type,
+                                                        size: file.size
+                                                    }}
+                                                    mode="input"
+                                                    onRemove={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                    <Textarea
+                                        placeholder="Message 9anon AI..."
+                                        value={inputValue}
+                                        onChange={(e) => setInputValue(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter" && !e.shiftKey) {
+                                                e.preventDefault();
+                                                handleSendMessage();
+                                            }
+                                        }}
+                                        disabled={isGenerating}
+                                        className="resize-none min-h-[48px] max-h-[200px]"
+                                    />
+                                </div>
                             </div>
                         </ChatInput>
                     )}
@@ -815,6 +925,12 @@ export default function NewChatPage() {
             <FilesModal
                 isOpen={filesModalOpen}
                 onClose={() => setFilesModalOpen(false)}
+            />
+
+            {/* Feedback Modal - shown to active users with 20+ messages */}
+            <FeedbackModal
+                isOpen={feedbackModalOpen}
+                onClose={() => setFeedbackModalOpen(false)}
             />
         </SidebarProvider>
     );

@@ -36,6 +36,7 @@ const AddMessageSchema = z.object({
     parentId: z.string().optional(),
     attachmentUrl: z.string().optional(),
     attachmentName: z.string().optional(),
+    files: z.string().optional(),
 });
 
 /**
@@ -48,6 +49,30 @@ const FeedbackSchema = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat CRUD Routes
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/chats/message-count
+ * Returns the total number of messages (user + assistant) across all
+ * chats owned by the authenticated user. Used to determine eligibility
+ * for the feedback modal (threshold: 20+ messages).
+ *
+ * @route GET /api/chats/message-count
+ * @security Bearer
+ * @returns {object} 200 - { count: number }
+ */
+router.get("/message-count", authenticate, asyncHandler(async (req: Request, res: Response) => {
+    const userId = (req as AuthenticatedRequest).userId!;
+
+    // Count all messages across user's chats (both user and assistant roles)
+    const count = await prisma.message.count({
+        where: {
+            chat: { userId }
+        }
+    });
+
+    logDbOperation("count", "Message", true, `User ${userId} has ${count} total messages`);
+    res.json({ count });
+}));
 
 /**
  * GET /api/chats
@@ -308,6 +333,7 @@ router.post("/:id/messages", authenticate, asyncHandler(async (req: Request, res
             sources: sources,
             attachmentUrl: messageData.attachmentUrl || null,
             attachmentName: messageData.attachmentName || null,
+            files: messageData.files || null,
             parentId: messageData.parentId || undefined,
             version,
             isActive: true,
