@@ -949,8 +949,8 @@ export default function ChatWithIdPage() {
                             <p className="text-center text-[11px] text-muted-foreground py-2">
                                 9anon AI may produce inaccurate information
                             </p>
-                            <div ref={messageContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto py-4">
-                                <div className="flex flex-col gap-6">
+                            <div ref={messageContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-4">
+                                <div className="flex flex-col gap-6 w-full max-w-4xl mx-auto">
                                     {messages.map(message => (
                                         <MessageBubble key={message.id} variant={message.role}>
                                             {message.role === "user" ? (
@@ -1035,7 +1035,7 @@ export default function ChatWithIdPage() {
                                                     )}
                                                 </div>
                                             ) : (
-                                                <div className="w-full">
+                                                <div className="w-full group relative">
                                                     <AssistantMessage>
                                                         {message.isThinking && !message.content && (
                                                             <div className="flex items-center py-2">
@@ -1049,8 +1049,8 @@ export default function ChatWithIdPage() {
                                                         {/* Contract display removed */}
 
                                                     </AssistantMessage>
-                                                    {/* Actions aligned with message bubble (after avatar space) */}
-                                                    <div className="flex items-center gap-2 mt-1 ml-[52px] text-xs text-muted-foreground">
+                                                    {/* Actions aligned with message bubble */}
+                                                    <div className="flex items-center gap-2 mt-1 ml-4 text-xs text-muted-foreground opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
                                                         <MessageTimestamp date={message.timestamp} />
                                                         <span className="text-muted-foreground/30">•</span>
                                                         <MessageActions

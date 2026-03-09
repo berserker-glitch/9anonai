@@ -20,10 +20,10 @@ export function AnimatedThinkingSvg({ className = "w-12 h-12 text-white" }: { cl
             });
 
             // The disassemble & reassemble animation sequence
-            tl.to(p1.current, { x: -60, y: -120, rotation: -6, scale: 0.9, opacity: 0.5, duration: 1.2, ease: "power2.inOut" }, 0)
-                .to(p2.current, { x: -60, y: 120, rotation: 4, scale: 0.9, opacity: 0.5, duration: 1.2, ease: "power2.inOut" }, 0.1)
-                .to(p3.current, { x: 60, y: 120, rotation: -4, scale: 0.9, opacity: 0.5, duration: 1.2, ease: "power2.inOut" }, 0.2)
-                .to(p4.current, { x: 60, y: -120, rotation: 6, scale: 0.9, opacity: 0.5, duration: 1.2, ease: "power2.inOut" }, 0.3);
+            tl.to(p1.current, { x: -30, y: -60, rotation: -6, scale: 0.9, opacity: 0.5, duration: 0.7, ease: "power2.inOut" }, 0)
+                .to(p2.current, { x: -30, y: 60, rotation: 4, scale: 0.9, opacity: 0.5, duration: 0.7, ease: "power2.inOut" }, 0.1)
+                .to(p3.current, { x: 30, y: 60, rotation: -4, scale: 0.9, opacity: 0.5, duration: 0.7, ease: "power2.inOut" }, 0.2)
+                .to(p4.current, { x: 30, y: -60, rotation: 6, scale: 0.9, opacity: 0.5, duration: 0.7, ease: "power2.inOut" }, 0.3);
 
         }, containerRef);
 
@@ -35,8 +35,8 @@ export function AnimatedThinkingSvg({ className = "w-12 h-12 text-white" }: { cl
             <svg
                 ref={containerRef}
                 xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 553.5 1458.42"
-                className={className}
+                viewBox="-100 -100 753.5 1658.42"
+                className={`${className} overflow-visible`}
                 fill="currentColor"
             >
                 <g>
