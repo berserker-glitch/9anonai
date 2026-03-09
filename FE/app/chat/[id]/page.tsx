@@ -24,6 +24,7 @@ import { SourcesAccordion } from "@/components/chat/sources-accordion";
 import { ChatInput } from "@/components/interaction/chat-input";
 import { FilePreview } from "@/components/chat/file-preview";
 import { AttachButton } from "@/components/interaction/attach-button";
+import { AnimatedThinkingSvg } from "@/components/interaction/animated-thinking-svg";
 import { ScrollToBottom } from "@/components/utility/scroll-to-bottom";
 import { ConfirmModal } from "@/components/utility/modal";
 import { SettingsModal } from "@/components/settings/settings-modal";
@@ -201,6 +202,33 @@ export default function ChatWithIdPage() {
         }
     }, []);
 
+    // Scroll specific message to top
+    const scrollToMessage = useCallback((messageId: string) => {
+        setTimeout(() => {
+            const el = document.getElementById(`message-${messageId}`);
+            if (el) {
+                // Scroll the element into view at the top of the container
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }, 100);
+    }, []);
+
+    // Auto-scroll when a new user message is added
+    useEffect(() => {
+        if (messages.length > 0) {
+            const lastMessage = messages[messages.length - 1];
+            // If the last message is the user's message, or if it's the AI's "thinking" stub right after
+            if (lastMessage.role === "user") {
+                scrollToMessage(lastMessage.id);
+            } else if (lastMessage.role === "assistant" && lastMessage.isThinking && messages.length >= 2) {
+                const prevMessage = messages[messages.length - 2];
+                if (prevMessage.role === "user") {
+                    scrollToMessage(prevMessage.id);
+                }
+            }
+        }
+    }, [messages, scrollToMessage]);
+
     // Handle scroll
     const handleScroll = useCallback(() => {
         if (messageContainerRef.current) {
@@ -280,6 +308,8 @@ export default function ChatWithIdPage() {
         setIsTyping(true);
         setIsGenerating(true);
         setShowWelcome(false);
+
+        const currentMessageId = Date.now().toString();
 
         let currentChatId = activeChatId;
 
@@ -385,7 +415,7 @@ export default function ChatWithIdPage() {
 
         // Add user message
         const userMessage: Message = {
-            id: Date.now().toString(),
+            id: currentMessageId,
             role: "user",
             content: content,
             timestamp: new Date(),
@@ -624,7 +654,7 @@ export default function ChatWithIdPage() {
                                             : m
                                     )
                                 );
-                                setTimeout(scrollToBottom, 50);
+                                // Do not force scroll to bottom here, just rely on auto-scroll of the message
                             } else if (event.type === "citation") {
                                 finalSources = event.sources || [];
                                 setMessages(prev =>
@@ -750,7 +780,7 @@ export default function ChatWithIdPage() {
                                             : m
                                     )
                                 );
-                                setTimeout(scrollToBottom, 50);
+                                // Prevent overriding the scroll to the message
                             } else if (event.type === "citation") {
                                 finalSources = event.sources || [];
                                 setMessages(prev =>
@@ -1008,9 +1038,8 @@ export default function ChatWithIdPage() {
                                                 <div className="w-full">
                                                     <AssistantMessage>
                                                         {message.isThinking && !message.content && (
-                                                            <div className="flex items-center gap-2 text-muted-foreground">
-                                                                <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
-                                                                <span>Thinking...</span>
+                                                            <div className="flex items-center py-2">
+                                                                <AnimatedThinkingSvg />
                                                             </div>
                                                         )}
                                                         <MessageContent content={message.content} />
