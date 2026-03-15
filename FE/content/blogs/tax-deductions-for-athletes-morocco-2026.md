@@ -3,7 +3,7 @@ title: "خصومات ضريبية 90% للرياضيين: دليل كامل 2026
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "هل أنت رياضي أو مدرب في المغرب؟ اكتشف كيف تستفيد من خصم ضريبي يصل إلى 90% على دخلك عام 2026. تعرف على الشروط والمتطلبات."
-image: ""
+image: "/blog-images/tax-deductions-for-athletes-morocco-2026.webp"
 imageAlt: "هل أنت رياضي أو مدرب في المغرب؟ اكتشف كيف تستفيد من خصم ضريبي يصل إلى 90% على دخلك عام 2026. تعرف على الشروط والمتطلبات."
 author: "9anon AI"
 keywords: ["tax deductions", "athletes", "Morocco", "sports", "Finance Law 50.25"]
