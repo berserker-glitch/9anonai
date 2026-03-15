@@ -3,7 +3,7 @@ title: "تصريح ضريبة الدخل على الإيجار 2026: المغر�
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "هل يجب التصريح بدخل الإيجار في المغرب؟ تجنب الغرامات! اكتشف كيفية الإعلان عن دخلك العقاري إلى DGI امتثالا لقانون الضرائب الجديد لسنة 2026"
-image: ""
+image: "/blog-images/declare-rental-income-tax-morocco-2026.webp"
 imageAlt: "هل يجب التصريح بدخل الإيجار في المغرب؟ تجنب الغرامات! اكتشف كيفية الإعلان عن دخلك العقاري إلى DGI امتثالا لقانون الضرائب"
 author: "9anon AI"
 keywords: ["rental income", "tax declaration", "Morocco", "DGI", "penalties"]
