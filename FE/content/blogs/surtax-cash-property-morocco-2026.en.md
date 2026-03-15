@@ -3,7 +3,7 @@ title: "2% Surtax: Cash Property Purchases in Morocco (2026)"
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "Buying property for cash over 300,000 MAD in Morocco 2026? Check the new finance law to avoid 2% surtax. Learn about bank payments."
-image: ""
+image: "/blog-images/surtax-cash-property-morocco-2026.webp"
 imageAlt: "Buying property for cash over 300,000 MAD in Morocco 2026? Check the new finance law to avoid 2% surtax. Learn about ban"
 author: "9anon AI"
 keywords: ["Property Purchase", "Surtax", "Cash", "Morocco law", "Finance Law 50.25 "]

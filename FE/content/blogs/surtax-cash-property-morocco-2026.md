@@ -3,7 +3,7 @@ title: "2% ذعيرة على العقارات نقدا: قانون 2026 في ا�
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "شراء عقار نقدا فوق 300،000 درهم في المغرب عام 2026؟  تحقق من قانون المالية الجديد لتجنب  ٪2 ذعيرة. اعرف المزيد حول الدفعات البنكية."
-image: ""
+image: "/blog-images/surtax-cash-property-morocco-2026.webp"
 imageAlt: "شراء عقار نقدا فوق 300،000 درهم في المغرب عام 2026؟  تحقق من قانون المالية الجديد لتجنب  ٪2 ذعيرة. اعرف المزيد حول الدفع"
 author: "9anon AI"
 keywords: ["Property Purchase", "Surtax", "Cash", "Morocco law", "Finance Law 50.25 "]
