@@ -3,7 +3,7 @@ title: "5% Tax (RAS) on Corporate Rentals: 2026 Guide"
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "Aware of the 5% RAS tax on office rentals and services in Morocco? Understand changes and comply with new Law 50.25 to avoid penalties."
-image: ""
+image: "/blog-images/ras-corporate-rentals-services-morocco-2026.webp"
 imageAlt: "Aware of the 5% RAS tax on office rentals and services in Morocco? Understand changes and comply with new Law 50.25 to a"
 author: "9anon AI"
 keywords: ["Withholding tax", "Rentals", "Services", "Morocco", "Companies", "Finance Law 50.25"]

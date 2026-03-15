@@ -3,7 +3,7 @@ title: "5% Taxe (RAS) sur locations: Guide entreprises 2026"
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "Connaissez-vous la taxe RAS de 5% sur les locations de bureaux et services au Maroc? Comprendre les changements et se conformer à la nouvelle loi 50.25."
-image: ""
+image: "/blog-images/ras-corporate-rentals-services-morocco-2026.webp"
 imageAlt: "Connaissez-vous la taxe RAS de 5% sur les locations de bureaux et services au Maroc? Comprendre les changements et se co"
 author: "9anon AI"
 keywords: ["Withholding tax", "Rentals", "Services", "Morocco", "Companies", "Finance Law 50.25"]

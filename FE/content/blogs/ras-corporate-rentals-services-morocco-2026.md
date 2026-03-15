@@ -3,7 +3,7 @@ title: "اقتطاع من المصدر 5% على الإيجارات 2026: دلي
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "هل تعلم عن ضريبة اقتطاع من المصدر 5% على إيجارات المكاتب والخدمات في المغرب؟ فهم التغيرات وامتثل للقانون 50.25 الجديد لتجنب المخالفات."
-image: ""
+image: "/blog-images/ras-corporate-rentals-services-morocco-2026.webp"
 imageAlt: "هل تعلم عن ضريبة اقتطاع من المصدر 5% على إيجارات المكاتب والخدمات في المغرب؟ فهم التغيرات وامتثل للقانون 50.25 الجديد لت"
 author: "9anon AI"
 keywords: ["Withholding tax", "Rentals", "Services", "Morocco", "Companies", "Finance Law 50.25"]
