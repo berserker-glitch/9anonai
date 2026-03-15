@@ -3,7 +3,7 @@ title: "تخفيض ضريبي 50% عند التقاعد: قانون 2026 للع�
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "هل يمكن تخفيض ضريبة بيع الأصل التجاري عند التقاعد في المغرب؟ تعرف على قانون المالية الجديد لعام 2026 و استفد من خصم يصل إلى 50%."
-image: ""
+image: "/blog-images/capital-gains-self-employed-retirement-2026.webp"
 imageAlt: "هل يمكن تخفيض ضريبة بيع الأصل التجاري عند التقاعد في المغرب؟ تعرف على قانون المالية الجديد لعام 2026 و استفد من خصم يصل "
 author: "9anon AI"
 keywords: ["Capital gains", "Retirement", "Sale", "Morocco", "Business", "IMU"]

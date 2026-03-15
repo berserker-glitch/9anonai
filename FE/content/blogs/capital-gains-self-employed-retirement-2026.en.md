@@ -3,7 +3,7 @@ title: "50% Capital Gains: Retirement Relief (2026 Morocco)"
 date: "2026-03-15"
 lastModified: "2026-03-15"
 description: "Deduct capital gains tax on business sale at retirement in Morocco? Know how to take advantage of deduction of up to 50% under new Finance Law. "
-image: ""
+image: "/blog-images/capital-gains-self-employed-retirement-2026.webp"
 imageAlt: "Deduct capital gains tax on business sale at retirement in Morocco? Know how to take advantage of deduction of up to 50%"
 author: "9anon AI"
 keywords: ["Capital gains", "Retirement", "Sale", "Morocco", "Business", "IMU"]
