@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useLanguage } from "@/lib/language-context";
 
 // Layout Components
 import { Sidebar, SidebarProvider } from "@/components/layout/sidebar";
@@ -25,6 +26,7 @@ import { ChatInput } from "@/components/interaction/chat-input";
 import { FilePreview } from "@/components/chat/file-preview";
 import { AttachButton } from "@/components/interaction/attach-button";
 import { AnimatedThinkingSvg } from "@/components/interaction/animated-thinking-svg";
+import { PaywallBanner } from "@/components/billing/paywall-banner";
 import { ScrollToBottom } from "@/components/utility/scroll-to-bottom";
 import { ConfirmModal } from "@/components/utility/modal";
 import { SettingsModal } from "@/components/settings/settings-modal";
@@ -66,6 +68,24 @@ interface ChatHistory {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 
+// ─── Trilingual UI strings (same subset used in /chat page) ──────────────────
+const ID_UI: Record<string, Record<string, string>> = {
+    disclaimer: {
+        ar: "9anon AI قد ينتج معلومات غير دقيقة",
+        fr: "9anon AI peut produire des informations inexactes",
+        en: "9anon AI may produce inaccurate information",
+    },
+    share:         { ar: "مشاركة",     fr: "Partager",       en: "Share" },
+    share_copied:  { ar: "تم نسخ الرابط!", fr: "Lien copié !", en: "Link copied!" },
+    delete_title:  { ar: "هل أنت متأكد؟", fr: "Êtes-vous sûr ?", en: "Are you sure?" },
+    delete_body:   { ar: "سيتم حذف هذه المحادثة نهائياً.", fr: "Cette conversation sera définitivement supprimée.", en: "This conversation will be permanently deleted." },
+    delete_btn:    { ar: "حذف",        fr: "Supprimer",      en: "Delete" },
+    free_plan:     { ar: "الخطة المجانية", fr: "Plan Gratuit", en: "Free Plan" },
+};
+function idu(key: string, lang: string): string {
+    return ID_UI[key]?.[lang] ?? ID_UI[key]?.["fr"] ?? key;
+}
+
 export default function ChatWithIdPage() {
     const params = useParams();
     const searchParams = useSearchParams();
@@ -73,12 +93,14 @@ export default function ChatWithIdPage() {
     const initialMessage = searchParams?.get("message");
     const router = useRouter();
     const { user, token, logout, isLoading: authLoading } = useAuth();
+    const { language } = useLanguage();
 
     // State
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState("");
     const [isTyping, setIsTyping] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [conversationLimitReached, setConversationLimitReached] = useState(false);
     const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(chatId);
     const [searchQuery, setSearchQuery] = useState("");
@@ -94,6 +116,10 @@ export default function ChatWithIdPage() {
     // Message editing state
     const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
     const [editValue, setEditValue] = useState("");
+    // Sharing state
+    const [shareUrl, setShareUrl] = useState<string | null>(null);
+    const [shareCopied, setShareCopied] = useState(false);
+    const [shareLoading, setShareLoading] = useState(false);
 
     const messageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -275,6 +301,33 @@ export default function ChatWithIdPage() {
             );
         } catch (e) {
             console.error("Failed to pin chat", e);
+        }
+    };
+
+    // Share current chat
+    const handleShareChat = async () => {
+        if (!activeChatId || shareLoading) return;
+        if (shareUrl) {
+            navigator.clipboard.writeText(shareUrl);
+            setShareCopied(true);
+            setTimeout(() => setShareCopied(false), 2000);
+            return;
+        }
+        setShareLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/chats/${activeChatId}/share`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await res.json();
+            setShareUrl(data.shareUrl);
+            navigator.clipboard.writeText(data.shareUrl);
+            setShareCopied(true);
+            setTimeout(() => setShareCopied(false), 2500);
+        } catch (e) {
+            console.error("Failed to share chat", e);
+        } finally {
+            setShareLoading(false);
         }
     };
 
@@ -519,6 +572,13 @@ export default function ChatWithIdPage() {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
+                if (response.status === 402 && errData.error === 'conversation_limit_reached') {
+                    setConversationLimitReached(true);
+                    setMessages(prev => prev.filter(m => m.id !== currentMessageId && m.id !== assistantId));
+                    setIsTyping(false);
+                    setIsGenerating(false);
+                    return;
+                }
                 throw new Error(errData.error || `HTTP error! status: ${response.status}`);
             }
 
@@ -892,7 +952,11 @@ export default function ChatWithIdPage() {
                             </button>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium truncate">{user?.name || user?.email}</p>
-                                <p className="text-xs text-muted-foreground">Free Plan</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {user?.plan === 'pro' ? 'Plan Mihani'
+                                        : user?.plan === 'basic' ? 'Plan Asasi'
+                                        : idu("free_plan", language)}
+                                </p>
                             </div>
                             <ThemeToggle />
                         </div>
@@ -975,9 +1039,24 @@ export default function ChatWithIdPage() {
                         </div>
                     ) : (
                         <ChatContainer className="flex-1 overflow-hidden md:rounded-[2rem]">
-                            <p className="text-center text-[11px] text-muted-foreground py-2">
-                                9anon AI may produce inaccurate information
-                            </p>
+                            <div className="flex items-center justify-between px-4 py-1.5">
+                                <p className="text-[11px] text-muted-foreground">
+                                    {idu("disclaimer", language)}
+                                </p>
+                                {messages.some(m => m.role === "assistant" && m.content) && (
+                                    <button
+                                        onClick={handleShareChat}
+                                        disabled={shareLoading}
+                                        title="Share this conversation"
+                                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted/60 disabled:opacity-50"
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                                        </svg>
+                                        {shareCopied ? idu("share_copied", language) : shareLoading ? "..." : idu("share", language)}
+                                    </button>
+                                )}
+                            </div>
                             <div ref={messageContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-4">
                                 <div className="flex flex-col gap-6 w-full max-w-4xl mx-auto">
                                     {messages.map(message => (
@@ -1117,8 +1196,13 @@ export default function ChatWithIdPage() {
                         </ChatContainer>
                     )}
 
+                    {/* Paywall banner — shown when free conversation cap is reached */}
+                    {!showWelcome && conversationLimitReached && (
+                        <PaywallBanner language={language} onNewConversation={handleNewChat} />
+                    )}
+
                     {/* Input Area when not in welcome mode */}
-                    {!showWelcome && (
+                    {!showWelcome && !conversationLimitReached && (
                         <ChatInput onSubmit={handleSendMessage} isLoading={isGenerating}>
                             <div className="flex-1 flex items-end gap-2 w-full min-w-0">
                                 <AttachButton onFilesSelected={handleFileUpload} />
@@ -1163,8 +1247,9 @@ export default function ChatWithIdPage() {
                     isOpen={deleteModalOpen}
                     onClose={() => setDeleteModalOpen(false)}
                     onConfirm={handleDeleteChat}
-                    title="Delete Chat"
-                    description="Are you sure you want to delete this chat? This action cannot be undone."
+                    title={idu("delete_title", language)}
+                    description={idu("delete_body", language)}
+                    confirmText={idu("delete_btn", language)}
                     variant="destructive"
                 />
 

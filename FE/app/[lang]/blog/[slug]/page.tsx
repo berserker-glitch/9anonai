@@ -15,6 +15,8 @@ import { ReadingProgress } from "@/components/blog/reading-progress";
 import { getMarkdownComponents } from "@/components/blog/markdown-components";
 import { BlogJsonLd } from "@/components/blog/blog-json-ld";
 import { FAQSection } from "@/components/landing/faq-section";
+import { EmailCapture } from "@/components/blog/email-capture";
+import { StickySubscribeBar } from "@/components/blog/sticky-subscribe-bar";
 
 export async function generateStaticParams() {
     const supportedLangs: BlogLanguage[] = ["ar", "fr", "en"];
@@ -154,7 +156,7 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
 
             <ReadingProgress lang={lang} />
 
-            <main className="pt-32 pb-20 px-6 sm:px-8 lg:px-12 max-w-7xl mx-auto relative">
+            <main className="pt-28 pb-20 px-6 sm:px-8 lg:px-12 max-w-7xl mx-auto relative">
                 <div className="max-w-4xl">
                     {/* Breadcrumbs with JSON-LD for Google rich snippets */}
                     <Breadcrumbs
@@ -259,9 +261,12 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
                             <ShareButtons url={pageUrl} title={post.title} lang={lang} />
                         </div>
 
+                        {/* Email capture — inline newsletter signup after article */}
+                        <EmailCapture lang={lang} />
+
                         {/* Promotion banner */}
                         <div className="not-prose mt-8">
-                            <BlogPromotion lang={lang} />
+                            <BlogPromotion lang={lang} topic={post.category ?? post.slug} />
                         </div>
 
                         {/* Related Articles for internal linking */}
@@ -278,6 +283,9 @@ export default async function BlogPost({ params }: { params: Promise<{ lang: Blo
             </main>
 
             <Footer />
+
+            {/* Sticky subscribe bar — appears at 60% scroll, dismissible */}
+            <StickySubscribeBar lang={lang} />
         </div>
     );
 }

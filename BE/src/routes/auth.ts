@@ -7,6 +7,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import rateLimit from "express-rate-limit";
 import { prisma } from "../services/prisma";
 import { logger, logAuthEvent } from "../services/logger";
 import {
@@ -15,6 +16,7 @@ import {
     AuthenticatedRequest
 } from "../middleware/auth";
 import { asyncHandler, HttpErrors } from "../middleware/error-handler";
+import { sendWelcomeEmail } from "../services/email";
 
 const router = Router();
 
@@ -27,7 +29,11 @@ const router = Router();
  */
 const RegisterSchema = z.object({
     email: z.string().email("Invalid email format"),
-    password: z.string().min(6, "Password must be at least 6 characters"),
+    password: z.string()
+        .min(8, "Password must be at least 8 characters")
+        .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+        .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+        .regex(/[0-9]/, "Password must contain at least one number"),
     name: z.string().optional(),
 });
 
@@ -54,7 +60,11 @@ const UpdateProfileSchema = z.object({
  */
 const ChangePasswordSchema = z.object({
     currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z.string().min(6, "New password must be at least 6 characters"),
+    newPassword: z.string()
+        .min(8, "New password must be at least 8 characters")
+        .regex(/[A-Z]/, "New password must contain at least one uppercase letter")
+        .regex(/[a-z]/, "New password must contain at least one lowercase letter")
+        .regex(/[0-9]/, "New password must contain at least one number"),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +73,20 @@ const ChangePasswordSchema = z.object({
 
 /** Number of salt rounds for bcrypt password hashing */
 const BCRYPT_SALT_ROUNDS = 10;
+
+/**
+ * Rate limiter for authentication endpoints.
+ * Prevents brute-force attacks on login/register/change-password.
+ */
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10,                  // 10 attempts per window
+    message: { error: 'Too many attempts, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { keyGeneratorIpFallback: false }, // suppress IPv6 keyGenerator warning
+    keyGenerator: (req) => req.ip || 'unknown',
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Routes
@@ -79,7 +103,7 @@ const BCRYPT_SALT_ROUNDS = 10;
  * @returns {object} 201 - JWT token and user data
  * @returns {object} 400 - Validation error or user already exists
  */
-router.post("/register", asyncHandler(async (req: Request, res: Response) => {
+router.post("/register", authLimiter, asyncHandler(async (req: Request, res: Response) => {
     const { email, password, name } = RegisterSchema.parse(req.body);
 
     // Check if user already exists
@@ -102,6 +126,11 @@ router.post("/register", asyncHandler(async (req: Request, res: Response) => {
 
     logAuthEvent("register", user.id, true, `New user registered: ${email}`);
     logger.info(`[AUTH] New user registered: ${user.id}`);
+
+    // Send welcome email (fire-and-forget — don't block registration response)
+    sendWelcomeEmail(email, name).catch((err) =>
+        logger.error("[AUTH] Failed to send welcome email", { error: err?.message })
+    );
 
     res.status(201).json({
         message: "User created successfully",
@@ -126,7 +155,7 @@ router.post("/register", asyncHandler(async (req: Request, res: Response) => {
  * @returns {object} 200 - JWT token and user data
  * @returns {object} 401 - Invalid credentials
  */
-router.post("/login", asyncHandler(async (req: Request, res: Response) => {
+router.post("/login", authLimiter, asyncHandler(async (req: Request, res: Response) => {
     const { email, password } = LoginSchema.parse(req.body);
 
     // Find user by email
@@ -134,6 +163,12 @@ router.post("/login", asyncHandler(async (req: Request, res: Response) => {
     if (!user) {
         logAuthEvent("login", null, false, `User not found: ${email}`);
         throw HttpErrors.unauthorized("Invalid credentials");
+    }
+
+    // Reject Google-only accounts trying to use password login
+    if (!user.password) {
+        logAuthEvent("login", user.id, false, "Google-only account tried password login");
+        throw HttpErrors.badRequest("This account uses Google sign-in. Please sign in with Google.");
     }
 
     // Verify password
@@ -145,6 +180,9 @@ router.post("/login", asyncHandler(async (req: Request, res: Response) => {
 
     // Generate JWT token
     const token = generateToken(user.id, user.email, user.role);
+
+    // Track login timestamp (non-blocking)
+    prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => {});
 
     logAuthEvent("login", user.id, true);
     logger.info(`[AUTH] User logged in: ${user.id}`);
@@ -174,27 +212,55 @@ router.post("/login", asyncHandler(async (req: Request, res: Response) => {
 router.get("/me", authenticate, asyncHandler(async (req: Request, res: Response) => {
     const userId = (req as AuthenticatedRequest).userId!;
 
-    const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-            id: true,
-            email: true,
-            name: true,
-            image: true,
-            role: true,
-            personalization: true,
-            isOnboarded: true,
-            marketingSource: true,
-            feedbackDismissed: true
-        }
-    });
+    const [user, subscription] = await Promise.all([
+        prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                image: true,
+                role: true,
+                personalization: true,
+                isOnboarded: true,
+                marketingSource: true,
+                feedbackDismissed: true,
+                country: true,
+            }
+        }),
+        prisma.subscription.findUnique({
+            where: { userId },
+            select: {
+                status: true,
+                currentPeriodEnd: true,
+                cancelledAt: true,
+                plan: { select: { name: true, displayName: true, messagesPerConversation: true, contractsPerMonth: true } },
+            }
+        }),
+    ]);
 
     if (!user) {
         logger.warn(`[AUTH] User not found in /me: ${userId}`);
         throw HttpErrors.notFound("User");
     }
 
-    res.json({ user });
+    const planName = (subscription?.status === 'active' ? subscription.plan.name : 'free') ?? 'free';
+
+    res.json({
+        user: {
+            ...user,
+            plan: planName,
+            subscription: subscription ? {
+                status: subscription.status,
+                planName: subscription.plan.name,
+                planDisplayName: subscription.plan.displayName,
+                currentPeriodEnd: subscription.currentPeriodEnd,
+                cancelledAt: subscription.cancelledAt,
+                messagesPerConversation: subscription.plan.messagesPerConversation,
+                contractsPerMonth: subscription.plan.contractsPerMonth,
+            } : null,
+        }
+    });
 }));
 
 /**
@@ -282,7 +348,7 @@ router.post("/update-profile", authenticate, asyncHandler(async (req: Request, r
  * @returns {object} 200 - Success message
  * @returns {object} 401 - Incorrect current password
  */
-router.post("/change-password", authenticate, asyncHandler(async (req: Request, res: Response) => {
+router.post("/change-password", authenticate, authLimiter, asyncHandler(async (req: Request, res: Response) => {
     const userId = (req as AuthenticatedRequest).userId!;
     const { currentPassword, newPassword } = ChangePasswordSchema.parse(req.body);
 
@@ -290,6 +356,11 @@ router.post("/change-password", authenticate, asyncHandler(async (req: Request, 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
         throw HttpErrors.notFound("User");
+    }
+
+    // Google-only accounts have no password to change
+    if (!user.password) {
+        throw HttpErrors.badRequest("This account uses Google sign-in and has no password to change.");
     }
 
     // Verify current password
@@ -310,6 +381,93 @@ router.post("/change-password", authenticate, asyncHandler(async (req: Request, 
     logger.info(`[AUTH] Password changed for user ${userId}`);
 
     res.json({ message: "Password changed successfully" });
+}));
+
+/**
+ * POST /api/auth/google
+ * Authenticates (or registers) a user via Google OAuth2 access token.
+ * Verifies the token by calling Google's userinfo endpoint.
+ * If a matching email already exists, the accounts are linked automatically.
+ *
+ * @route POST /api/auth/google
+ * @param {string} req.body.credential - Google OAuth2 access token from the frontend popup
+ * @returns {object} 200 - JWT token and user data
+ * @returns {object} 400 - Invalid or missing credential
+ */
+router.post("/google", authLimiter, asyncHandler(async (req: Request, res: Response) => {
+    const { credential } = req.body;
+    if (!credential) {
+        throw HttpErrors.badRequest("Google credential is required");
+    }
+
+    // Verify the access token by fetching user info from Google
+    let payload: { sub: string; email: string; name?: string; picture?: string };
+    try {
+        const googleRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+            headers: { Authorization: `Bearer ${credential}` },
+        });
+        if (!googleRes.ok) throw new Error("Rejected by Google");
+        const info = await googleRes.json() as { sub?: string; email?: string; name?: string; picture?: string };
+        if (!info.sub || !info.email) throw new Error("Incomplete userinfo");
+        payload = { sub: info.sub, email: info.email, name: info.name, picture: info.picture };
+    } catch {
+        logAuthEvent("google-login", null, false, "Invalid Google token");
+        throw HttpErrors.unauthorized("Invalid Google token");
+    }
+
+    const { sub: googleId, email, name, picture } = payload;
+
+    // Look up by googleId first, then fall back to email (link existing account)
+    let user = await prisma.user.findUnique({ where: { googleId } });
+
+    if (!user) {
+        user = await prisma.user.findUnique({ where: { email } });
+
+        if (user) {
+            // Link existing email/password account to Google
+            user = await prisma.user.update({
+                where: { id: user.id },
+                data: { googleId },
+            });
+        } else {
+            // Create a new Google-only account
+            user = await prisma.user.create({
+                data: {
+                    email: email!,
+                    password: null,
+                    googleId,
+                    name: name ?? null,
+                    image: picture ?? null,
+                },
+            });
+
+            // Send welcome email (fire-and-forget)
+            sendWelcomeEmail(email!, name).catch((err) =>
+                logger.error("[AUTH] Failed to send welcome email", { error: err?.message })
+            );
+
+            logAuthEvent("register", user.id, true, `New user via Google: ${email}`);
+        }
+    }
+
+    // Update last login timestamp (non-blocking)
+    prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => {});
+
+    const token = generateToken(user.id, user.email, user.role);
+
+    logAuthEvent("google-login", user.id, true);
+    logger.info(`[AUTH] Google login: ${user.id}`);
+
+    res.json({
+        token,
+        user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            isOnboarded: user.isOnboarded,
+        },
+    });
 }));
 
 /**

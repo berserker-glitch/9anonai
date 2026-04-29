@@ -31,8 +31,10 @@ router.get("/users", auth_1.authenticate, auth_1.requireSuperAdmin, (0, error_ha
             email: true,
             name: true,
             role: true,
+            isFavorite: true,
             createdAt: true,
             marketingSource: true,
+            googleId: true,
             _count: {
                 select: {
                     chats: true
@@ -66,8 +68,10 @@ router.get("/users", auth_1.authenticate, auth_1.requireSuperAdmin, (0, error_ha
             email: user.email,
             name: user.name,
             role: user.role,
+            isFavorite: user.isFavorite,
             createdAt: user.createdAt,
             marketingSource: user.marketingSource,
+            authMethod: user.googleId ? "google" : "email",
             conversationCount: user._count.chats,
             messageCount: user.chats.reduce((total, chat) => total + chat._count.messages, 0),
             lastActive: new Date(maxUpdatedAt).toISOString()
@@ -75,6 +79,31 @@ router.get("/users", auth_1.authenticate, auth_1.requireSuperAdmin, (0, error_ha
     });
     (0, logger_1.logDbOperation)("findMany", "User", true, `Retrieved ${users.length} users`);
     res.json({ users: usersWithStats });
+}));
+/**
+ * PATCH /api/admin/users/:userId/favorite
+ * Toggles the favorite status of a user.
+ *
+ * @route PATCH /api/admin/users/:userId/favorite
+ * @security Bearer (superadmin)
+ * @param {string} req.params.userId - Target user's ID
+ * @returns {object} 200 - Updated isFavorite value
+ * @returns {object} 404 - User not found
+ */
+router.patch("/users/:userId/favorite", auth_1.authenticate, auth_1.requireSuperAdmin, (0, error_handler_1.asyncHandler)(async (req, res) => {
+    const { userId } = req.params;
+    const adminId = req.userId;
+    const user = await prisma_1.prisma.user.findUnique({ where: { id: userId }, select: { isFavorite: true } });
+    if (!user)
+        throw error_handler_1.HttpErrors.notFound("User");
+    const updated = await prisma_1.prisma.user.update({
+        where: { id: userId },
+        data: { isFavorite: !user.isFavorite },
+        select: { id: true, isFavorite: true }
+    });
+    logger_1.logger.info(`[ADMIN] User ${userId} favorite toggled to ${updated.isFavorite} by admin ${adminId}`);
+    (0, logger_1.logDbOperation)("update", "User", true, `Toggled isFavorite to ${updated.isFavorite}`);
+    res.json(updated);
 }));
 /**
  * GET /api/admin/stats

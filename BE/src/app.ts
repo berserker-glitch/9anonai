@@ -6,6 +6,7 @@
 
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import path from "path";
 
 // Routes
@@ -14,12 +15,16 @@ import authRouter from "./routes/auth";
 import chatsRouter from "./routes/chats";
 import uploadRouter from "./routes/upload";
 import adminRouter from "./routes/admin";
+import adminAnalyticsRouter from "./routes/admin-analytics";
 import pdfRouter from "./routes/pdf";
 import contractBuilderRouter from "./routes/contract-builder";
+import newsletterRouter from "./routes/newsletter";
+import billingRouter from "./routes/billing";
 
 // Middleware
 import { requestLogger, errorHandler, notFoundHandler } from "./middleware";
 import { logger } from "./services/logger";
+import { initEmailScheduler } from "./services/email-scheduler";
 
 // Configuration
 import { config } from "./config";
@@ -43,10 +48,36 @@ app.use(cors({
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Security Headers (Helmet)
+// ─────────────────────────────────────────────────────────────────────────────
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            connectSrc: ["'self'", ...corsOrigins],
+        },
+    },
+    crossOriginEmbedderPolicy: false, // Allow embedding fonts/images from CDN
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Paddle Webhook — raw body capture (MUST be before express.json())
+// The webhook route needs the raw Buffer for HMAC signature verification.
+// ─────────────────────────────────────────────────────────────────────────────
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }), (req, _res, next) => {
+    (req as any).rawBody = req.body;
+    next();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Body Parsing Middleware
 // ─────────────────────────────────────────────────────────────────────────────
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ limit: "2mb", extended: true }));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Request Logging Middleware (Winston-based)
@@ -66,8 +97,11 @@ app.use("/api/auth", authRouter);      // Auth (register, login)
 app.use("/api/chats", chatsRouter);    // Chat persistence (CRUD)
 app.use("/api/upload", uploadRouter);  // File uploads
 app.use("/api/admin", adminRouter);    // Admin dashboard
+app.use("/api/admin/analytics", adminAnalyticsRouter); // Admin analytics
 app.use("/api/pdf", pdfRouter);        // PDF contract generation
 app.use("/api/contract-builder", contractBuilderRouter); // Contract Builder
+app.use("/api/newsletter", newsletterRouter);           // Newsletter subscriptions
+app.use("/api/billing", billingRouter);                // Billing & subscriptions (Paddle)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Health Check Endpoint
@@ -76,9 +110,6 @@ app.get("/health", (req, res) => {
     res.json({
         status: "ok",
         timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        version: process.env.npm_package_version || "1.0.0",
     });
 });
 
@@ -91,6 +122,9 @@ app.use(errorHandler);
 // ─────────────────────────────────────────────────────────────────────────────
 // Server Initialization
 // ─────────────────────────────────────────────────────────────────────────────
+// Initialize email scheduler (re-engagement cron jobs)
+initEmailScheduler();
+
 const server = app.listen(PORT, () => {
     logger.info(`
     🚀 9anon Legal AI Backend is running!

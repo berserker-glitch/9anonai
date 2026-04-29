@@ -1,5 +1,6 @@
 import { MetadataRoute } from "next";
 import { getAllPosts } from "@/lib/blog";
+import { SEO_PAGE_SLUGS } from "@/lib/seo-page-types";
 
 /**
  * Safely parse a date string to a valid Date object.
@@ -17,20 +18,8 @@ function parseDate(dateString: string): Date {
     return parsed;
 }
 
-/**
- * SEO landing page slugs — each served under /[lang]/[slug]
- * with trilingual hreflang alternates
- */
-const SEO_PAGE_SLUGS = [
-    "legal-ai",
-    "legal-chatbot",
-    "business-legal",
-    "startup-legal",
-    "divorce-law",
-    "employee-rights",
-    "tenant-rights",
-    "contract-review",
-];
+// SEO_PAGE_SLUGS is imported from lib/seo-page-types.ts — single source of truth.
+// Adding a new page to the registry automatically includes it in the sitemap.
 
 export default function sitemap(): MetadataRoute.Sitemap {
     const baseUrl = "https://9anonai.com";
@@ -114,24 +103,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
             },
         },
         {
-            url: `${baseUrl}/chat`,
-            lastModified: new Date(),
-            changeFrequency: "always",
-            priority: 0.9,
-        },
-        {
-            url: `${baseUrl}/login`,
-            lastModified: new Date(),
-            changeFrequency: "monthly",
-            priority: 0.5,
-        },
-        {
-            url: `${baseUrl}/register`,
-            lastModified: new Date(),
-            changeFrequency: "monthly",
-            priority: 0.5,
-        },
-        {
             url: `${baseUrl}/privacy`,
             lastModified: new Date(),
             changeFrequency: "monthly",
@@ -143,37 +114,27 @@ export default function sitemap(): MetadataRoute.Sitemap {
             changeFrequency: "monthly",
             priority: 0.5,
         },
-        {
-            url: `${baseUrl}/about`,
+        // About page (trilingual) — high-value SEO page for brand trust and legal authority
+        ...["ar", "fr", "en"].map((lang) => ({
+            url: `${baseUrl}/${lang}/about`,
             lastModified: new Date(),
-            changeFrequency: "monthly",
+            changeFrequency: "monthly" as const,
             priority: 0.8,
-        },
+            alternates: {
+                languages: {
+                    ar: `${baseUrl}/ar/about`,
+                    fr: `${baseUrl}/fr/about`,
+                    en: `${baseUrl}/en/about`,
+                },
+            },
+        })),
         {
             url: `${baseUrl}/vs-9anoun`,
             lastModified: new Date(),
             changeFrequency: 'weekly',
             priority: 0.9,
         },
-        {
-            url: `${baseUrl}/labor-law`,
-            lastModified: new Date(),
-            changeFrequency: 'weekly',
-            priority: 0.85,
-        },
-        {
-            url: `${baseUrl}/traffic-law`,
-            lastModified: new Date(),
-            changeFrequency: 'weekly',
-            priority: 0.85,
-        },
-        {
-            url: `${baseUrl}/family-law`,
-            lastModified: new Date(),
-            changeFrequency: 'weekly',
-            priority: 0.85,
-        },
-        // SEO landing pages (trilingual, 8 pages × 3 langs = 24 URLs)
+        // SEO landing pages — driven by SEO_PAGE_SLUGS (single source of truth in seo-page-types.ts)
         ...seoPageUrls,
         // Blog posts (trilingual)
         ...blogUrls,

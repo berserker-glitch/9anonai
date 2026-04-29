@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useLanguage } from "@/lib/language-context";
+import { trackEvent } from "@/lib/analytics";
+import { looksLikeContractRequest } from "@/lib/contract-type-detector";
 
 // Layout Components
 import { Sidebar, SidebarProvider } from "@/components/layout/sidebar";
@@ -30,6 +33,7 @@ import { FeedbackModal } from "@/components/chat/feedback-modal";
 import { AttachButton } from "@/components/interaction/attach-button";
 import { FilePreview } from "@/components/chat/file-preview";
 import { AnimatedThinkingSvg } from "@/components/interaction/animated-thinking-svg";
+import { PaywallBanner } from "@/components/billing/paywall-banner";
 
 // UI Components
 import { Textarea } from "@/components/ui/textarea";
@@ -65,15 +69,181 @@ interface ChatHistory {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 
+// ─── Suggestion chips (language-aware) ─────────────────────────────────────
+
+const SUGGESTIONS: Record<string, { icon: string; text: string }[]> = {
+    ar: [
+        { icon: "👔", text: "ما هي حقوقي عند الفصل التعسفي من العمل؟" },
+        { icon: "🏠", text: "كيف يمكنني فسخ عقد الكراء؟" },
+        { icon: "💍", text: "ما هي إجراءات الطلاق في القانون المغربي؟" },
+        { icon: "🏗️", text: "كيف أؤسس شركة في المغرب؟" },
+        { icon: "⚖️", text: "ما هي قواعد الإرث في المغرب؟" },
+        { icon: "🛡️", text: "كيف أحمي نفسي من الجرائم الإلكترونية؟" },
+    ],
+    fr: [
+        { icon: "👔", text: "Quels sont mes droits en cas de licenciement abusif ?" },
+        { icon: "🏠", text: "Comment résilier ou augmenter un contrat de bail ?" },
+        { icon: "💍", text: "Quelle est la procédure de divorce au Maroc ?" },
+        { icon: "🏗️", text: "Comment créer une société au Maroc ?" },
+        { icon: "⚖️", text: "Quelles sont les règles d'héritage au Maroc ?" },
+        { icon: "🛡️", text: "Que faire en cas de cybercriminalité ?" },
+    ],
+    en: [
+        { icon: "👔", text: "What are my rights if I'm unfairly dismissed from work?" },
+        { icon: "🏠", text: "How can I terminate or change my rental contract?" },
+        { icon: "💍", text: "What is the divorce procedure under Moroccan law?" },
+        { icon: "🏗️", text: "How do I start a company in Morocco?" },
+        { icon: "⚖️", text: "What are the inheritance rules in Morocco?" },
+        { icon: "🛡️", text: "What are my consumer rights for defective products?" },
+    ],
+};
+
+// ─── UI strings for the chat page ───────────────────────────────────────────
+
+const CHAT_UI: Record<string, Record<string, string>> = {
+    // Prefix only — "9anon" is always rendered separately as a styled span
+    welcome_prefix: {
+        ar: "مرحباً بك في ",
+        fr: "Bienvenue sur ",
+        en: "Welcome to ",
+    },
+    welcome_subtitle: {
+        ar: "مساعدك الذكي للقانون المغربي. اسألني أي سؤال قانوني، عن الإجراءات أو حقوقك.",
+        fr: "Votre assistant IA pour le droit marocain. Posez-moi toute question juridique, sur les procédures ou vos droits.",
+        en: "Your AI-powered Moroccan law assistant. Ask me anything about legal matters, procedures, or rights.",
+    },
+    input_placeholder: {
+        ar: "اكتب رسالتك إلى 9anon...",
+        fr: "Message à 9anon IA...",
+        en: "Message 9anon AI...",
+    },
+    disclaimer: {
+        // Keep "9anon AI" at the front to avoid Arabic bidi reordering splitting the brand name
+        ar: "9anon AI قد ينتج معلومات غير دقيقة",
+        fr: "9anon AI peut produire des informations inexactes",
+        en: "9anon AI may produce inaccurate information",
+    },
+    share: {
+        ar: "مشاركة",
+        fr: "Partager",
+        en: "Share",
+    },
+    share_copied: {
+        ar: "تم نسخ الرابط!",
+        fr: "Lien copié !",
+        en: "Link copied!",
+    },
+    delete_confirm_title: {
+        ar: "هل أنت متأكد؟",
+        fr: "Êtes-vous sûr ?",
+        en: "Are you sure?",
+    },
+    delete_confirm_body: {
+        ar: "سيتم حذف هذه المحادثة نهائياً ولا يمكن التراجع عنه.",
+        fr: "Cette conversation sera définitivement supprimée. Cette action est irréversible.",
+        en: "This conversation will be permanently deleted. This action cannot be undone.",
+    },
+    delete_confirm_btn: {
+        ar: "حذف",
+        fr: "Supprimer",
+        en: "Delete",
+    },
+    delete_cancel_btn: {
+        ar: "إلغاء",
+        fr: "Annuler",
+        en: "Cancel",
+    },
+    free_plan: {
+        ar: "الخطة المجانية",
+        fr: "Plan Gratuit",
+        en: "Free Plan",
+    },
+    basic_plan: {
+        ar: "الخطة الأساسية",
+        fr: "Plan Asasi",
+        en: "Basic Plan",
+    },
+    pro_plan: {
+        ar: "الخطة المهنية",
+        fr: "Plan Mihani",
+        en: "Pro Plan",
+    },
+    // Contract suggestion card
+    contract_title: {
+        ar: "هل تريد صياغة عقد احترافي؟",
+        fr: "Besoin d'un contrat professionnel ?",
+        en: "Need a professional contract?",
+    },
+    contract_body: {
+        ar: "منشئ العقود يصيغ وثائق متوافقة مع القانون المغربي مع مراجعة قانونية تلقائية وتصدير PDF.",
+        fr: "Le Générateur de Contrats rédige des documents conformes au droit marocain avec révision juridique automatique et export PDF.",
+        en: "The Contract Builder drafts legally compliant documents with automatic legal review and PDF export.",
+    },
+    contract_cta: {
+        ar: "فتح منشئ العقود →",
+        fr: "Ouvrir le Générateur →",
+        en: "Open Contract Builder →",
+    },
+    // Progressive tips
+    tip_contract_text: {
+        ar: "يمكنك أيضاً صياغة العقود القانونية بالذكاء الاصطناعي 📄",
+        fr: "Vous pouvez aussi rédiger des contrats juridiques avec l'IA 📄",
+        en: "You can also draft legal contracts with AI 📄",
+    },
+    tip_contract_cta: {
+        ar: "جرّب منشئ العقود",
+        fr: "Essayer le générateur de contrats",
+        en: "Try the Contract Builder",
+    },
+    tip_upload_text: {
+        ar: "هل تعلم أنك يمكنك إرفاق وثائق للحصول على تحليل مخصص؟ 📎",
+        fr: "Savez-vous que vous pouvez joindre des documents pour une analyse personnalisée ? 📎",
+        en: "Did you know you can attach documents for personalized analysis? 📎",
+    },
+    tip_upload_cta: {
+        ar: "جرّب الآن",
+        fr: "Essayer maintenant",
+        en: "Try it now",
+    },
+    tip_pin_text: {
+        ar: "ثبّت المحادثات المهمة للوصول إليها بسرعة 📌",
+        fr: "Épinglez vos conversations importantes pour les retrouver rapidement 📌",
+        en: "Pin important conversations for quick access 📌",
+    },
+};
+
+/** Get a UI string for the current language, falling back to French */
+function ui(key: string, lang: string): string {
+    return CHAT_UI[key]?.[lang] ?? CHAT_UI[key]?.["fr"] ?? key;
+}
+
+function getLanguageFromPersonalization(personalization?: string | null): string {
+    if (!personalization) return "ar";
+    try {
+        const p = JSON.parse(personalization);
+        const lang = p.spokenLanguage;
+        if (lang === "fr") return "fr";
+        if (lang === "en") return "en";
+        return "ar";
+    } catch {
+        return "ar";
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 export default function NewChatPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { user, token, logout, isLoading: authLoading } = useAuth();
+    const { language } = useLanguage();
 
     // State
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState("");
     const [isTyping, setIsTyping] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [conversationLimitReached, setConversationLimitReached] = useState(false);
     const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
@@ -85,6 +255,23 @@ export default function NewChatPage() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [filesModalOpen, setFilesModalOpen] = useState(false);
     const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+    // Track assistant responses in this session for inline feedback prompt
+    const [sessionAssistantCount, setSessionAssistantCount] = useState(0);
+    // Sharing state
+    const [shareUrl, setShareUrl] = useState<string | null>(null);
+    const [shareCopied, setShareCopied] = useState(false);
+    const [shareLoading, setShareLoading] = useState(false);
+    // Progressive tips (dismissed in localStorage)
+    const [dismissedTips, setDismissedTips] = useState<Set<string>>(() => {
+        if (typeof window === "undefined") return new Set();
+        try { return new Set(JSON.parse(localStorage.getItem("9anon_dismissed_tips") || "[]")); }
+        catch { return new Set(); }
+    });
+    // Contract Builder suggestion — shown inline below assistant responses when contract intent detected
+    const [contractSuggestionMessageIds, setContractSuggestionMessageIds] = useState<Set<string>>(new Set());
+    const [dismissedContractSuggestions, setDismissedContractSuggestions] = useState<Set<string>>(new Set());
+
+    const autoSentRef = useRef(false);
 
     const messageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -95,11 +282,18 @@ export default function NewChatPage() {
         }
     }, [user, authLoading, router]);
 
-    // Show feedback modal immediately if not dismissed
+    // Auto-send ?q= query param (from onboarding scenario picker)
     useEffect(() => {
-        if (!token || !user || user.feedbackDismissed) return;
-        setFeedbackModalOpen(true);
-    }, [token, user]);
+        if (!user || !token || autoSentRef.current) return;
+        const q = searchParams.get("q");
+        if (q && q.trim()) {
+            autoSentRef.current = true;
+            // Clear the query param from URL without re-render
+            window.history.replaceState(null, "", "/chat");
+            handleSendMessageDirect(q.trim());
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, token]);
 
     // Load chat history
     useEffect(() => {
@@ -178,7 +372,19 @@ export default function NewChatPage() {
         setMessages([]);
         setShowWelcome(true);
         setInputValue("");
+        setSessionAssistantCount(0);
+        setConversationLimitReached(false);
         window.history.pushState(null, '', '/chat');
+    };
+
+    // Send a message directly with a string (chips, onboarding auto-send, deep links)
+    const handleSendMessageDirect = (text: string) => {
+        setInputValue(text);
+        // Use a microtask so state flush happens before handleSendMessage reads inputValue
+        setTimeout(() => {
+            setInputValue("");
+            triggerSend(text);
+        }, 0);
     };
 
     // Select chat - navigate to [id] page for existing chats
@@ -221,9 +427,8 @@ export default function NewChatPage() {
         }
     };
 
-    // Send message - handles both new chat creation and sending
-    const handleSendMessage = async () => {
-        const content = inputValue.trim();
+    // Core send logic — accepts content directly (used by chips, ?q= param, and the textarea)
+    const triggerSend = async (content: string) => {
         if (!content && attachedFiles.length === 0) return;
         if (isGenerating) return;
 
@@ -295,6 +500,9 @@ export default function NewChatPage() {
                 });
                 const newChat = await res.json();
                 currentChatId = newChat.id;
+                trackEvent("chat_created");
+                // Track first-ever message
+                if (chatHistory.length === 0) trackEvent("first_message_sent");
                 setActiveChatId(currentChatId);
                 // Update URL without navigation
                 window.history.pushState(null, '', `/chat/${currentChatId}`);
@@ -446,6 +654,13 @@ export default function NewChatPage() {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
+                if (response.status === 402 && errData.error === 'conversation_limit_reached') {
+                    setConversationLimitReached(true);
+                    setMessages(prev => prev.filter(m => m.id !== currentMessageId && m.id !== assistantId));
+                    setIsTyping(false);
+                    setIsGenerating(false);
+                    return;
+                }
                 throw new Error(errData.error || `HTTP error! status: ${response.status}`);
             }
 
@@ -511,6 +726,8 @@ export default function NewChatPage() {
 
             // Assistant message is now saved by the backend
 
+            // Contract Builder suggestion disabled — feature is admin-only during development
+
         } catch (error) {
             console.error("Stream error:", error);
             setMessages(prev =>
@@ -528,7 +745,15 @@ export default function NewChatPage() {
             setIsTyping(false);
             setIsGenerating(false);
             scrollToBottom();
+            setSessionAssistantCount(prev => prev + 1);
         }
+    };
+
+    // Public handleSendMessage — reads from textarea inputValue state
+    const handleSendMessage = () => {
+        const content = inputValue.trim();
+        setInputValue("");
+        triggerSend(content);
     };
 
     // Regenerate assistant response - keeps user message, replaces assistant message
@@ -636,6 +861,70 @@ export default function NewChatPage() {
         }
     };
 
+    // Share current chat — generates a public link
+    const handleShareChat = async () => {
+        if (!activeChatId || shareLoading) return;
+        if (shareUrl) {
+            // Already generated — just copy again
+            navigator.clipboard.writeText(shareUrl);
+            setShareCopied(true);
+            setTimeout(() => setShareCopied(false), 2000);
+            return;
+        }
+        setShareLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/chats/${activeChatId}/share`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await res.json();
+            setShareUrl(data.shareUrl);
+            navigator.clipboard.writeText(data.shareUrl);
+            setShareCopied(true);
+            setTimeout(() => setShareCopied(false), 2500);
+            trackEvent("chat_shared");
+        } catch (e) {
+            console.error("Failed to share chat", e);
+        } finally {
+            setShareLoading(false);
+        }
+    };
+
+    // Dismiss a progressive tip
+    const dismissTip = (tipId: string) => {
+        const next = new Set(dismissedTips);
+        next.add(tipId);
+        setDismissedTips(next);
+        try { localStorage.setItem("9anon_dismissed_tips", JSON.stringify([...next])); } catch {}
+    };
+
+    // Which tip to show based on conversation count
+    const getProgressiveTip = (): { id: string; text: string; cta: string; href: string } | null => {
+        const count = chatHistory.length;
+        const lang = language;
+        const tips = [
+
+            {
+                id: "tip_upload",
+                threshold: 3,
+                text: ui("tip_upload_text", lang),
+                cta: ui("tip_upload_cta", lang),
+                href: "#attach",
+            },
+            {
+                id: "tip_pin",
+                threshold: 5,
+                text: ui("tip_pin_text", lang),
+                cta: "",
+                href: "",
+            },
+        ];
+        for (const tip of tips) {
+            if (count >= tip.threshold && !dismissedTips.has(tip.id)) return tip;
+        }
+        return null;
+    };
+
     // Filter chats by search
     const filteredChats = chatHistory.filter(chat =>
         chat.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -693,7 +982,11 @@ export default function NewChatPage() {
                             </button>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium truncate">{user?.name || user?.email}</p>
-                                <p className="text-xs text-muted-foreground">Free Plan</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {user?.plan === 'pro' ? ui("pro_plan", language)
+                                        : user?.plan === 'basic' ? ui("basic_plan", language)
+                                        : ui("free_plan", language)}
+                                </p>
                             </div>
                             <ThemeToggle />
                         </div>
@@ -711,10 +1004,10 @@ export default function NewChatPage() {
                                     <img src="/9anon-logo.png" alt="9anon Logo" className="w-full h-full object-cover" />
                                 </div>
                                 <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4 text-foreground bg-clip-text text-center">
-                                    Welcome to <span className="text-primary">9anon</span>
+                                    {ui("welcome_prefix", language)}<span className="text-primary">9anon</span>
                                 </h1>
                                 <p className="text-lg text-muted-foreground mb-12 text-center max-w-xl font-light">
-                                    Your AI-powered Moroccan law assistant. Ask me anything about legal matters, procedures, or rights.
+                                    {ui("welcome_subtitle", language)}
                                 </p>
 
                                 <div className="w-full relative z-10 mb-12">
@@ -741,7 +1034,7 @@ export default function NewChatPage() {
                                                     </div>
                                                 )}
                                                 <Textarea
-                                                    placeholder="Message 9anon AI..."
+                                                    placeholder={ui("input_placeholder", language)}
                                                     value={inputValue}
                                                     onChange={(e) => setInputValue(e.target.value)}
                                                     onKeyDown={(e) => {
@@ -757,30 +1050,48 @@ export default function NewChatPage() {
                                     </ChatInput>
                                 </div>
 
-                                <div className="flex flex-wrap justify-center gap-2 max-w-2xl mt-4">
-                                    {[
-                                        { title: "ما هي حقوقي في حالة توقيفي؟" },
-                                        { title: "Comment créer une société au Maroc?" },
-                                        { title: "What are the labor laws in Morocco?" },
-                                        { title: "شرح لي قانون الأسرة" },
-                                    ].map((s, i) => (
-                                        <button
-                                            key={s.title}
-                                            onClick={() => setInputValue(s.title)}
-                                            className="px-4 py-2 text-sm font-medium text-muted-foreground bg-secondary/40 hover:bg-secondary hover:text-foreground border border-transparent hover:border-border/60 rounded-full transition-all duration-300 transform hover:scale-[1.02]"
-                                            style={{ animationDelay: `${i * 100}ms` }}
-                                        >
-                                            {s.title}
-                                        </button>
-                                    ))}
-                                </div>
+                                {/* Language-aware suggestion chips — auto-send on click */}
+                                {(() => {
+                                    const chips = SUGGESTIONS[language] ?? SUGGESTIONS.fr;
+                                    return (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl mt-4">
+                                            {chips.map((s, i) => (
+                                                <button
+                                                    key={i}
+                                                    onClick={() => handleSendMessageDirect(s.text)}
+                                                    disabled={isGenerating}
+                                                    className="flex items-start gap-2 px-4 py-3 text-sm font-medium text-start text-muted-foreground bg-secondary/40 hover:bg-secondary hover:text-foreground border border-transparent hover:border-border/60 rounded-xl transition-all duration-200 disabled:opacity-50"
+                                                    style={{ animationDelay: `${i * 80}ms` }}
+                                                >
+                                                    <span className="shrink-0">{s.icon}</span>
+                                                    <span className="leading-snug">{s.text}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
                     ) : (
                         <ChatContainer className="flex-1 overflow-hidden md:rounded-[2rem]">
-                            <p className="text-center text-[11px] text-muted-foreground py-2">
-                                9anon AI may produce inaccurate information
-                            </p>
+                            <div className="flex items-center justify-between px-4 py-1.5">
+                                <p className="text-[11px] text-muted-foreground">
+                                    {ui("disclaimer", language)}
+                                </p>
+                                {activeChatId && messages.some(m => m.role === "assistant" && m.content) && (
+                                    <button
+                                        onClick={handleShareChat}
+                                        disabled={shareLoading}
+                                        title="Share this conversation"
+                                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted/60 disabled:opacity-50"
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                                        </svg>
+                                        {shareCopied ? ui("share_copied", language) : shareLoading ? "..." : ui("share", language)}
+                                    </button>
+                                )}
+                            </div>
                             <div ref={messageContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-4">
                                 <div className="flex flex-col gap-6 w-full max-w-4xl mx-auto">
                                     {messages.map(message => (
@@ -828,7 +1139,50 @@ export default function NewChatPage() {
                                                         {message.sources && message.sources.length > 0 && (
                                                             <SourcesAccordion sources={message.sources} />
                                                         )}
-                                                        {message.contract && (
+                                                        {/* Contract Builder suggestion — shown when contract intent detected */}
+                                        {contractSuggestionMessageIds.has(message.id) &&
+                                            !dismissedContractSuggestions.has(message.id) &&
+                                            !message.isThinking && (
+                                            <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                                                <div className="flex items-start gap-3">
+                                                    <div className="shrink-0 w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center text-primary mt-0.5">
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                                            <polyline points="14 2 14 8 20 8" />
+                                                            <line x1="16" y1="13" x2="8" y2="13" />
+                                                            <line x1="16" y1="17" x2="8" y2="17" />
+                                                        </svg>
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-medium text-foreground mb-0.5">
+                                                            {ui("contract_title", language)}
+                                                        </p>
+                                                        <p className="text-xs text-muted-foreground leading-relaxed">
+                                                            {ui("contract_body", language)}
+                                                        </p>
+                                                        <div className="flex items-center gap-3 mt-2">
+                                                            <a
+                                                                href="/contract-builder"
+                                                                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                                                            >
+                                                                {ui("contract_cta", language)}
+                                                            </a>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => setDismissedContractSuggestions(prev => new Set(prev).add(message.id))}
+                                                        className="shrink-0 text-muted-foreground/50 hover:text-muted-foreground transition-colors p-0.5"
+                                                        title="Dismiss"
+                                                    >
+                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                                            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {message.contract && (
                                                             <div className="mt-4 p-4 bg-primary/10 rounded-lg border border-primary/20">
                                                                 <div className="flex items-center gap-3">
                                                                     <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -900,8 +1254,68 @@ export default function NewChatPage() {
                         </ChatContainer>
                     )}
 
+                    {/* Inline satisfaction prompt — appears after 3rd assistant response */}
+                    {!showWelcome && sessionAssistantCount === 3 && !user?.feedbackDismissed && (
+                        <div className="flex items-center justify-between gap-4 px-6 py-3 bg-primary/5 border-t border-primary/10 text-sm animate-in slide-in-from-bottom duration-300">
+                            <span className="text-muted-foreground">
+                                {getLanguageFromPersonalization(user?.personalization) === "fr"
+                                    ? "Les réponses vous sont-elles utiles ?"
+                                    : getLanguageFromPersonalization(user?.personalization) === "en"
+                                    ? "Are the answers helpful so far?"
+                                    : "هل الإجابات مفيدة لك حتى الآن؟"}
+                            </span>
+                            <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                    onClick={() => setFeedbackModalOpen(true)}
+                                    className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                                >
+                                    {getLanguageFromPersonalization(user?.personalization) === "fr" ? "Donner un avis"
+                                        : getLanguageFromPersonalization(user?.personalization) === "en" ? "Give feedback"
+                                        : "أعطِ رأيك"}
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        await fetch(`${API_URL}/auth/dismiss-feedback`, {
+                                            method: "PATCH",
+                                            headers: { Authorization: `Bearer ${token}` },
+                                        });
+                                        setSessionAssistantCount(0);
+                                    }}
+                                    className="text-xs text-muted-foreground hover:text-foreground transition-colors px-2"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Progressive engagement tip — appears at conversation milestones */}
+                    {!showWelcome && !isGenerating && (() => {
+                        const tip = getProgressiveTip();
+                        if (!tip) return null;
+                        return (
+                            <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-emerald-500/5 border-t border-emerald-500/15 text-sm animate-in slide-in-from-bottom duration-300">
+                                <span className="text-foreground/80 text-xs">{tip.text}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {tip.href && tip.href !== "#attach" && tip.cta && (
+                                        <a href={tip.href} className="text-xs text-primary font-medium hover:underline">{tip.cta}</a>
+                                    )}
+                                    {tip.href === "#attach" && tip.cta && (
+                                        <button onClick={() => document.querySelector<HTMLElement>("[data-attach-button]")?.click()} className="text-xs text-primary font-medium hover:underline">{tip.cta}</button>
+                                    )}
+                                    <button onClick={() => dismissTip(tip.id)} className="text-muted-foreground hover:text-foreground text-xs px-1 transition-colors">✕</button>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* Paywall banner — shown when free conversation cap is reached */}
+                    {!showWelcome && conversationLimitReached && (
+                        <PaywallBanner language={language} onNewConversation={handleNewChat} />
+                    )}
+
                     {/* Input Area when not in welcome mode */}
-                    {!showWelcome && (
+                    {!showWelcome && !conversationLimitReached && (
                         <ChatInput onSubmit={handleSendMessage} isLoading={isGenerating}>
                             <div className="flex-1 flex items-end gap-2 w-full min-w-0">
                                 <AttachButton onFilesSelected={handleFileUpload} />
@@ -955,9 +1369,9 @@ export default function NewChatPage() {
                 isOpen={deleteModalOpen}
                 onClose={() => setDeleteModalOpen(false)}
                 onConfirm={handleDeleteChat}
-                title="Delete chat?"
-                description="This will permanently delete this chat history."
-                confirmText="Delete"
+                title={ui("delete_confirm_title", language)}
+                description={ui("delete_confirm_body", language)}
+                confirmText={ui("delete_confirm_btn", language)}
                 variant="destructive"
             />
 

@@ -7,7 +7,7 @@
  */
 
 import { Router, Request, Response } from "express";
-import { authenticate, AuthenticatedRequest } from "../middleware/auth";
+import { authenticate, requireSuperAdmin, requirePlan, AuthenticatedRequest } from "../middleware/auth";
 import { getContractStream } from "../services/contract-builder-ai";
 import { generateFlexiblePDF } from "../services/contract-generator";
 import { prisma } from "../services/prisma";
@@ -15,6 +15,12 @@ import { logger, logDbOperation } from "../services/logger";
 import { z } from "zod";
 
 const router = Router();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan guard: Contract Builder requires Basic plan or higher.
+// Superadmins always have access.
+// ─────────────────────────────────────────────────────────────────────────────
+router.use(authenticate, requirePlan('basic'));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Validation Schemas
@@ -357,10 +363,18 @@ router.get("/sessions/:id/html", authenticate, async (req: Request, res: Respons
             return res.status(404).json({ error: "Session not found" });
         }
 
+        let parsedReviewNotes = null;
+        try {
+            parsedReviewNotes = session.reviewNotes ? JSON.parse(session.reviewNotes) : null;
+        } catch (e) {
+            logger.warn(`[CONTRACT-ROUTES] Invalid JSON in reviewNotes for session ${id}`);
+            parsedReviewNotes = null;
+        }
+
         return res.json({
             html: session.htmlContent,
             version: session.version,
-            reviewNotes: session.reviewNotes ? JSON.parse(session.reviewNotes) : null,
+            reviewNotes: parsedReviewNotes,
         });
     } catch (error) {
         logger.error("[CONTRACT-ROUTES] Failed to get HTML:", error);
@@ -433,6 +447,52 @@ router.post("/sessions/:id/export", authenticate, async (req: Request, res: Resp
     } catch (error) {
         logger.error("[CONTRACT-ROUTES] PDF export error:", error);
         return res.status(500).json({ error: "Failed to generate PDF" });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /sessions/:id/title — Rename a contract session
+// ─────────────────────────────────────────────────────────────────────────────
+
+const renameTitleSchema = z.object({
+    title: z.string().min(1, "Title cannot be empty").max(100, "Title too long"),
+});
+
+/**
+ * Renames a contract session's title.
+ * Verifies the session belongs to the authenticated user.
+ */
+router.patch("/sessions/:id/title", authenticate, async (req: Request, res: Response) => {
+    try {
+        const authReq = req as AuthenticatedRequest;
+        const userId = authReq.userId;
+        const { id } = req.params;
+
+        if (!userId) {
+            return res.status(401).json({ error: "Authentication required" });
+        }
+
+        const parsed = renameTitleSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: "Invalid title", details: parsed.error.flatten() });
+        }
+
+        const session = await prisma.contractSession.findFirst({ where: { id, userId } });
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        const updated = await prisma.contractSession.update({
+            where: { id },
+            data: { title: parsed.data.title },
+            select: { id: true, title: true },
+        });
+
+        logDbOperation("UPDATE", "ContractSession", true, `id=${id}, title=${parsed.data.title}`);
+        return res.json(updated);
+    } catch (error) {
+        logger.error("[CONTRACT-ROUTES] Failed to rename session:", error);
+        return res.status(500).json({ error: "Failed to rename session" });
     }
 });
 

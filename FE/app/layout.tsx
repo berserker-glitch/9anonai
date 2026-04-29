@@ -1,8 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import { Playfair_Display, Plus_Jakarta_Sans, Cairo } from "next/font/google";
 import { cookies } from "next/headers";
+import Script from "next/script";
 import "./globals.css";
 import { Providers } from "@/components/providers/providers";
+import { WebVitals } from "@/components/web-vitals";
+
+const GA_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || "";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -44,7 +48,7 @@ export const metadata: Metadata = {
   // Default description is French — the primary SERP-facing audience.
   // Arabic and English descriptions are served on their respective /ar and /en routes.
   description:
-    "Intelligence artificielle du droit marocain — 9anon AI est le meilleur et le plus rapide assistant juridique IA du Maroc. Obtenez des conseils juridiques gratuits instantanés sur la Moudawana, le Code du Travail, et plus. Chatbot juridique disponible 24/7.",
+    "Conseils juridiques gratuits en 30 secondes. 9anon AI répond sur la Moudawana, Code du Travail, divorce, héritage, contrats. IA juridique #1 au Maroc. 100% gratuit, 24h/24.",
   keywords: [
     // === PRIMARY TARGET ===
     "Intelligence artificielle du droit marocain",
@@ -135,7 +139,7 @@ export const metadata: Metadata = {
     languages: {
       "ar-MA": "https://9anonai.com/ar",
       "fr-MA": "https://9anonai.com/fr",
-      "en-US": "https://9anonai.com/en",
+      "en-MA": "https://9anonai.com/en",
     },
   },
   // icons and openGraph images removed to use file-based convention (icon.png)
@@ -143,7 +147,7 @@ export const metadata: Metadata = {
     type: "website",
     // fr_MA as default locale — matches the default description language
     locale: "fr_MA",
-    alternateLocale: ["ar_MA", "en_US"],
+    alternateLocale: ["ar_MA", "en_MA"],
     url: "https://9anonai.com",
     siteName: "9anon AI - Intelligence artificielle du droit marocain",
     title: "9anon AI | Intelligence artificielle du droit marocain",
@@ -265,8 +269,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
-  const lang = cookieStore.get("NEXT_LOCALE")?.value || "ar";
-  const dir = lang === "ar" ? "rtl" : "ltr";
+  const lang = cookieStore.get("NEXT_LOCALE")?.value || "fr"; // Bots get French — primary SERP audience
 
   return (
     <html lang={lang} dir="ltr" suppressHydrationWarning>
@@ -281,7 +284,25 @@ export default async function RootLayout({
           />
         ))}
       </head>
+      {/* Google Analytics 4 — afterInteractive so it never blocks rendering */}
+      {GA_ID && (
+        <>
+          <Script
+            src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`}
+            strategy="afterInteractive"
+          />
+          <Script id="ga4-init" strategy="afterInteractive">
+            {`
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', '${GA_ID}', { page_path: window.location.pathname });
+            `}
+          </Script>
+        </>
+      )}
       <body className={`${playfair.variable} ${jakarta.variable} ${cairo.variable} font-sans antialiased`}>
+        <WebVitals />
         <Providers lang={lang}>
           {children}
         </Providers>
